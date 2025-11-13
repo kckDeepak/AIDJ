@@ -115,7 +115,7 @@ if __name__ == "__main__":
     and specific song requests. Calls run_pipeline() to execute the full pipeline and generate the mix.
     """
     user_input = (
-        "Just create a mix between i ain't worried, Closer."
+        "Create a mix between all 10 songs from 6 to 8 pm for a casino event"
     )
     # Execute the pipeline with the sample user input.
     run_pipeline(user_input)

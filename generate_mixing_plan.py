@@ -252,18 +252,19 @@ def generate_mixing_plan(analyzed_setlist_json, first_fade_in_ms=5000, crossfade
                     otac_val = compute_otac(last_track_meta, track)
                     overlap_sec = get_estimated_overlap(transition_type, crossfade_early_ms, 8000, eq_match_ms)
                     if transition_type == "Chorus Beatmatch":
-                        # Use end of last chorus as cut point.
+                        # Use end of first chorus as cut point.
                         choruses = last_track_meta.get("choruses", [])
                         if choruses:
-                            outgoing_cut_sec = choruses[-1]["end"]
-                            # Ensure enough room for overlap; fallback if not.
-                            if outgoing_cut_sec < overlap_sec:
-                                outgoing_cut_sec = overlap_sec
+                            outgoing_cut_sec = choruses[0]["end"]
+                            # Ensure enough room for overlap and minimum playtime; fallback if not.
+                            min_cut_sec = 30.0  # Minimum seconds to play before cutting.
+                            if outgoing_cut_sec < max(overlap_sec, min_cut_sec):
+                                outgoing_cut_sec = last_full_duration_sec
                                 transition_type = "Crossfade"
                                 overlap_sec = get_estimated_overlap(transition_type, crossfade_early_ms, 8000, eq_match_ms)
                                 transition_point = "end of track"
                             else:
-                                transition_point = "chorus end beat align"
+                                transition_point = "first chorus end beat align"
                         else:
                             # Fallback if no choruses.
                             outgoing_cut_sec = last_full_duration_sec
