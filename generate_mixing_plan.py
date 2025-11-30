@@ -1,127 +1,133 @@
 # generate_mixing_plan.py
 
 """
-This module generates a DJ mixing plan based on an analyzed setlist, strictly enforcing 
-the 'Chorus Beatmatch' transition type. The mix will prioritize a chain of tracks that 
-are harmonically compatible, have choruses, and a BPM difference of 2 or less.
+This module generates a DJ mixing plan based on metadata and structure JSON inputs.
+It strictly enforces 'Chorus Beatmatch' transitions where possible (BPM diff <= 2, both tracks have transition points, harmonic compatibility).
+Fallbacks to 'Crossfade' otherwise. Prioritizes a chain of compatible tracks at the start, sorted globally by BPM ascending.
 
 Key features:
-- **STRICT ENFORCEMENT:** Only 'Chorus Beatmatch' is suggested if BPM difference <= 2 
-  and both tracks have chorus data. Otherwise, a 'Crossfade' fallback is used (which 
-  results in no complex transition in generate_mix for tracks that don't meet the rule).
-- Prioritizes a chain of Chorus Beatmatch-ready tracks at the start of the mix.
-- Estimates transition overlaps based on the Chorus Beatmatch type.
-- Computes OTAC (Optimal Tempo Adjustment Coefficient) for smooth tempo transitions.
-- Prevents a track from transitioning to itself.
-- Generates a mixing plan with start times, transition points, cut offsets, and comments for each track.
+- Merges metadata (BPM, key, genre) and structure (transition_point, has_vocals) data per track.
+- Computes OTAC for tempo adjustments, harmonic compatibility, and transition timings.
+- Generates plan with start times, cut points, overlaps, and comments.
+- Prevents self-transitions and skips missing files.
 
 Dependencies:
-- json: For parsing input setlist and serializing the mixing plan.
-- os: For file path operations.
-- numpy: For numerical computations (e.g., OTAC calculation).
-- datetime, timedelta: For handling time calculations and formatting.
-- pydub: For loading audio files to determine track durations.
+- json: For loading inputs and saving plan.
+- os: For file paths.
+- numpy: For OTAC calculations.
+- datetime, timedelta: For time formatting.
+- pydub: For audio durations.
 """
 
-import os 
-import json 
-import numpy as np 
-from datetime import datetime, timedelta 
-from pydub import AudioSegment 
+import os
+import json
+import numpy as np
+from datetime import datetime, timedelta
+from pydub import AudioSegment
 
-# Define the directory path where local MP3 song files are stored.
+# Directory for song files.
 SONGS_DIR = "./songs"
 
 
-# ---------------------------
-# Estimated overlap for timing
-# ---------------------------
-def get_estimated_overlap(transition_type: str, crossfade_early_ms: int = 5500, duration_ms: int = 8000, eq_match_ms: int = 15000):
+def load_and_merge_data(metadata_path: str, structure_path: str):
     """
-    Estimates the overlap duration (in seconds) for a transition based on the transition type.
+    Loads metadata.json and structure.json, merges them into analyzed setlist format.
+    Matches segments by time, tracks by title/artist.
     """
-    t = transition_type.lower() 
+    with open(metadata_path, "r") as f:
+        metadata_data = json.load(f)
+    with open(structure_path, "r") as f:
+        structure_data = json.load(f)
+
+    analyzed_setlist = []
+    for meta_seg, struct_seg in zip(
+        metadata_data["metadata_setlist"], structure_data["structure_setlist"]
+    ):
+        if meta_seg["time"] != struct_seg["time"]:
+            raise ValueError("Time segments mismatch between metadata and structure.")
+        time_range = meta_seg["time"]
+        analyzed_tracks = []
+        for meta_track, struct_track in zip(meta_seg["tracks"], struct_seg["tracks"]):
+            if (
+                meta_track["title"] != struct_track["title"]
+                or meta_track["artist"] != struct_track["artist"]
+            ):
+                raise ValueError("Track mismatch between metadata and structure.")
+            full_track = {**meta_track, **struct_track}
+            analyzed_tracks.append(full_track)
+        analyzed_setlist.append({"time": time_range, "analyzed_tracks": analyzed_tracks})
+
+    return {"analyzed_setlist": analyzed_setlist}
+
+
+def get_estimated_overlap(transition_type: str, crossfade_early_ms: int = 5500, duration_ms: int = 8000, eq_match_ms: int = 15000) -> float:
+    """
+    Returns overlap in seconds based on transition type.
+    """
+    t = transition_type.lower()
     if "fade in" in t:
-        return 0.0 
-    # Use standard crossfade overlap for the required 'Chorus Beatmatch' transition.
-    return (duration_ms + crossfade_early_ms) / 1000.0 
+        return 0.0
+    if "chorus beatmatch" in t:
+        return 16.0  # Vocal/instrumental separation fade.
+    return (duration_ms + crossfade_early_ms) / 1000.0
 
 
-# ---------------------------
-# Harmonic compatibility
-# ---------------------------
-def is_harmonic_key(from_key_semitone, to_key_semitone):
+def is_harmonic_key(from_key_semitone: int | None, to_key_semitone: int | None) -> bool:
     """
-    Determines if two tracks are harmonically compatible based on their key semitone indices.
+    Checks harmonic compatibility using semitone differences.
     """
-    compatible_shifts = [0, 1, 11, 7, 5] 
+    compatible_shifts = [0, 1, 11, 7, 5]
     if from_key_semitone is None or to_key_semitone is None:
-        return True 
-    key_diff = abs(int(from_key_semitone) - int(to_key_semitone)) % 12 
-    return key_diff in compatible_shifts or (12 - key_diff) in compatible_shifts 
+        return True
+    key_diff = abs(int(from_key_semitone) - int(to_key_semitone)) % 12
+    return key_diff in compatible_shifts or (12 - key_diff) in compatible_shifts
 
 
-# ---------------------------
-# OTAC (tempo adjust) helper
-# ---------------------------
-def compute_otac(song1_data, song2_data):
+def compute_otac(song1_data: dict, song2_data: dict) -> float:
     """
-    Computes the Optimal Tempo Adjustment Coefficient (OTAC) for transitioning between two tracks.
+    Computes Optimal Tempo Adjustment Coefficient (OTAC) as log(tempo2 / tempo1) / 60.
     """
-    tempo1, tempo2 = song1_data.get('bpm', 0), song2_data.get('bpm', 0) 
+    tempo1 = song1_data.get("bpm", 0)
+    tempo2 = song2_data.get("bpm", 0)
     try:
         if tempo1 <= 0 or tempo2 <= 0:
-            return 0.0 
-        otac = np.log(float(tempo2) / float(tempo1)) / 60.0 
-        return float(otac) 
+            return 0.0
+        return np.log(float(tempo2) / float(tempo1)) / 60.0
     except Exception:
-        return 0.0 
+        return 0.0
 
 
-# ---------------------------
-# Transition suggestion (STRICT)
-# ---------------------------
-def suggest_transition_type(from_track, to_track):
+def suggest_transition_type(from_track: dict, to_track: dict) -> str:
     """
-    Strictly suggests 'Chorus Beatmatch' if BPM difference <= 2 and choruses are available.
-    Falls back to 'Crossfade' if conditions are not met.
+    Suggests 'Chorus Beatmatch' if BPM diff <= 2, both have transition points, and harmonic compatible.
+    Otherwise, 'Crossfade'.
     """
-    # 1. Prevent self-transition.
-    if from_track.get('title') == to_track.get('title'):
-        return "Crossfade" # Fallback
+    if from_track.get("title") == to_track.get("title"):
+        return "Crossfade"
 
-    bpm_diff = abs(float(from_track.get('bpm', 0)) - float(to_track.get('bpm', 0)))
-    has_choruses_from = bool(from_track.get('choruses', [])) 
-    has_choruses_to = bool(to_track.get('choruses', [])) 
-    harmonic_compatible = is_harmonic_key(from_track.get('key_semitone'), to_track.get('key_semitone'))
+    bpm_diff = abs(float(from_track.get("bpm", 0)) - float(to_track.get("bpm", 0)))
+    has_transition_from = "transition_point" in from_track and from_track["transition_point"] is not None
+    has_transition_to = "transition_point" in to_track and to_track["transition_point"] is not None
+    harmonic_compatible = is_harmonic_key(
+        from_track.get("key_semitone"), to_track.get("key_semitone")
+    )
 
-    # 2. Condition for STRICT Chorus Beatmatch: BPM diff <= 2 and both tracks have choruses.
-    if bpm_diff <= 2 and has_choruses_from and has_choruses_to and harmonic_compatible:
+    if bpm_diff <= 2 and has_transition_from and has_transition_to and harmonic_compatible:
         return "Chorus Beatmatch"
-
-    # 3. Fallback for all other cases (e.g., if BPM is too far, or no chorus).
-    return "Crossfade" 
+    return "Crossfade"
 
 
-# ---------------------------
-# Time formatting helper
-# ---------------------------
 def format_time(seconds: float) -> str:
     """
-    Formats seconds into HH:MM:SS string.
+    Formats seconds to HH:MM:SS.
     """
-    delta = timedelta(seconds=seconds)
-    return (datetime.min + delta).strftime("%H:%M:%S")
+    return (datetime.min + timedelta(seconds=seconds)).strftime("%H:%M:%S")
 
-# ---------------------------
-# Track selection and sorting
-# ---------------------------
 
-def select_and_sort_tracks_for_mixing(analyzed_data):
+def select_and_sort_tracks_for_mixing(analyzed_data: dict) -> list[dict]:
     """
-    Selects and sorts all tracks, prioritizing a continuous chain of 
-    Chorus Beatmatch-friendly tracks at the start, ensuring no song repeats 
-    immediately after being played.
+    Sorts all tracks by BPM ascending. Builds initial chain of Chorus Beatmatch-compatible tracks.
+    Appends remaining tracks. Avoids immediate repeats.
     """
     all_tracks = []
     for segment in analyzed_data.get("analyzed_setlist", []):
@@ -129,199 +135,193 @@ def select_and_sort_tracks_for_mixing(analyzed_data):
             track_copy = track.copy()
             track_copy["original_segment_time"] = segment.get("time", "Unknown")
             all_tracks.append(track_copy)
-    
-    # 1. Sort all tracks globally by BPM ascending (low to high)
-    all_tracks.sort(key=lambda x: x.get('bpm', 0))
-    
-    selected_chain = []
-    remaining_tracks_pool = list(all_tracks)
-    
-    if not remaining_tracks_pool:
+
+    if not all_tracks:
         return []
 
-    # 2. Select the starting track: the first track that has a chorus.
-    start_track_index = -1
-    for i, track in enumerate(remaining_tracks_pool):
-        if bool(track.get('choruses', [])):
-            start_track_index = i
-            break
-    
+    # Global BPM sort (ascending).
+    all_tracks.sort(key=lambda x: x.get("bpm", 0))
+
+    selected_chain = []
+    remaining_tracks_pool = list(all_tracks)
+
+    # Find starting track with transition point.
+    start_track_index = next(
+        (i for i, track in enumerate(remaining_tracks_pool) if "transition_point" in track and track["transition_point"] is not None),
+        -1,
+    )
     if start_track_index == -1:
-        print("No tracks with choruses found. Cannot initiate Chorus Beatmatch chain. Using simple BPM sort.")
+        print("No tracks with transition points. Using BPM-sorted order.")
         return all_tracks
 
     current_track = remaining_tracks_pool.pop(start_track_index)
     selected_chain.append(current_track)
-    
-    available_tracks = remaining_tracks_pool 
-    
-    # 3. Greedily select the next best Chorus Beatmatch track using the strict rule.
-    print(f"Starting with {current_track['title']} (BPM: {current_track.get('bpm', 'N/A')}). Searching for initial Chorus Beatmatch chain...")
-    
+    available_tracks = remaining_tracks_pool
+
+    print(
+        f"Starting with {current_track['title']} (BPM: {current_track.get('bpm', 'N/A')}). Building Chorus Beatmatch chain..."
+    )
+
+    # Greedily build chain.
     while available_tracks:
+        next_candidates = [
+            (i, t)
+            for i, t in enumerate(available_tracks)
+            if t["title"] != current_track["title"]
+        ]
         best_next_track = None
         best_index = -1
-        
-        # Filter available tracks to exclude immediate repeats.
-        next_candidates = [
-            (i, t) for i, t in enumerate(available_tracks) 
-            if t['title'] != current_track['title'] 
-        ]
-        
-        # Look for the track with the closest BPM that satisfies the Chorus Beatmatch criteria.
-        for i_original, next_track in next_candidates:
+        for orig_i, next_track in next_candidates:
             if suggest_transition_type(current_track, next_track) == "Chorus Beatmatch":
                 best_next_track = next_track
-                # Find the index of the track in the *original* `available_tracks` list.
-                original_index = available_tracks.index(best_next_track)
-                best_index = original_index
-                break 
+                best_index = available_tracks.index(next_track)
+                break
 
         if best_next_track:
-            print(f" -> Next track: {best_next_track['title']} (BPM: {best_next_track.get('bpm', 'N/A')}) via Chorus Beatmatch.")
+            print(
+                f" -> {best_next_track['title']} (BPM: {best_next_track.get('bpm', 'N/A')}) via Chorus Beatmatch."
+            )
             selected_chain.append(best_next_track)
-            
-            # Remove the track from the pool and update current_track.
             available_tracks.pop(best_index)
             current_track = best_next_track
         else:
-            print("Chorus Beatmatch chain complete or no further compatible track available without repeating.")
             break
-            
-    # 4. Append the rest of the BPM-sorted tracks.
-    final_mixing_order = selected_chain + available_tracks
-    
-    print(f"Total tracks in plan: {len(final_mixing_order)}. Tracks in initial Chorus Beatmatch chain: {len(selected_chain)}")
-    print(f"Final track order (first 5): {[(t['title'], t['bpm']) for t in final_mixing_order[:5]]}...")
 
-    return final_mixing_order
+    final_order = selected_chain + available_tracks
+    print(
+        f"Total tracks: {len(final_order)}. Chain length: {len(selected_chain)}."
+    )
+    print(
+        f"Order preview: {[(t['title'], t['bpm']) for t in final_order[:5]]}..."
+    )
+    return final_order
 
 
-# ---------------------------
-# Mixing plan generator
-# ---------------------------
-def generate_mixing_plan(analyzed_setlist_json=None, first_fade_in_ms=5000, crossfade_early_ms=5500, eq_match_ms=15000):
+def generate_mixing_plan(
+    metadata_json_path: str,
+    structure_json_path: str,
+    eq_match_ms: int = 15000,
+    crossfade_early_ms: int = 5500,
+    first_fade_in_ms: int = 5000,
+):
     """
-    Generates a DJ mixing plan from an analyzed setlist, strictly enforcing Chorus Beatmatch transitions.
+    Main function: Merges inputs, selects/sorts tracks, computes transitions, saves mixing_plan.json.
     """
     try:
-        # Load analyzed setlist JSON.
-        if analyzed_setlist_json is None:
-            with open("analyzed_setlist.json", "r") as f:
-                analyzed_setlist_json = f.read()
-        analyzed_data = json.loads(analyzed_setlist_json)
-        
-        # Use the custom selection/sorting logic.
+        # Merge data.
+        analyzed_data = load_and_merge_data(metadata_json_path, structure_json_path)
+
+        # Select and sort tracks.
         all_tracks = select_and_sort_tracks_for_mixing(analyzed_data)
 
-        mixing_plan = [] 
-        last_track_meta = None 
-        last_start_sec = None 
-        last_full_duration_sec = 0.0 
+        mixing_plan = []
+        last_track_meta = None
+        last_start_sec = 0.0
+        last_full_duration_sec = 0.0
 
-        # Process sorted tracks (global order).
         for track in all_tracks:
             file_path = os.path.join(SONGS_DIR, track["file"])
-            
-            # Skip if the current track is the same as the last track (prevents self-transition)
-            if last_track_meta and track.get("title") == last_track_meta.get("title"):
-                print(f"Skipping track '{track.get('title')}' to prevent self-transition.")
+
+            # Skip self-transition or missing file.
+            if last_track_meta and track["title"] == last_track_meta["title"]:
+                print(f"Skipping '{track['title']}' to avoid repeat.")
+                continue
+            if not os.path.exists(file_path):
+                print(f"Missing: {file_path}. Skipping.")
                 continue
 
-            if not os.path.exists(file_path):
-                print(f"[generate_mixing_plan] Missing file: {file_path}. Skipping track.")
-                continue 
-
-            # Load audio file to determine its duration.
+            # Get duration.
             try:
                 audio = AudioSegment.from_file(file_path)
-                duration_sec = len(audio) / 1000.0 
+                duration_sec = len(audio) / 1000.0
             except Exception as e:
-                print(f"[generate_mixing_plan] Error loading audio for {track['file']}: {e}. Skipping.")
+                print(f"Error loading {track['file']}: {e}. Skipping.")
                 continue
 
-            # --- Transition Calculation ---
+            # Compute transition.
             if last_track_meta is None:
-                # First track uses a fade-in transition.
+                # First track.
                 start_sec = 0.0
                 transition_type = "Fade In"
-                outgoing_cut_sec = None 
+                outgoing_cut_sec = None
                 overlap_sec = 0.0
                 from_track_title = None
                 otac_val = 0.0
-                transition_point = "downbeat align"
-                comment = f"Start set with {track.get('title')} (BPM: {track.get('bpm', 'N/A')}, original segment: {track.get('original_segment_time', 'N/A')})." 
+                transition_point_desc = "downbeat align"
+                comment = (
+                    f"Start with {track['title']} (BPM: {track.get('bpm', 'N/A')}, "
+                    f"segment: {track.get('original_segment_time', 'N/A')})."
+                )
             else:
-                # Suggest transition type (will be Chorus Beatmatch or Crossfade/Fallback).
+                # Subsequent tracks.
                 transition_type = suggest_transition_type(last_track_meta, track)
                 otac_val = compute_otac(last_track_meta, track)
-                overlap_sec = get_estimated_overlap(transition_type, crossfade_early_ms, 8000, eq_match_ms)
-                
-                # Default cut is the end of the outgoing track (full duration).
-                outgoing_cut_sec = last_full_duration_sec 
-                transition_point = "beat grid match"
+                overlap_sec = get_estimated_overlap(
+                    transition_type, crossfade_early_ms, 8000, eq_match_ms
+                )
+                outgoing_cut_sec = last_full_duration_sec
+                transition_point_desc = "beat grid match"
 
                 if transition_type == "Chorus Beatmatch":
-                    # If Chorus Beatmatch is suggested, find the first valid chorus end for the cut point.
-                    choruses = last_track_meta.get("choruses", []) 
-                    min_cut_sec = 30.0 # Minimum seconds to play before cutting.
-                    
-                    if choruses and len(choruses) > 0:
-                        first_chorus_end = choruses[0].get("end", last_full_duration_sec)
-                        
-                        if first_chorus_end > max(overlap_sec, min_cut_sec):
-                            # Cut the outgoing track at the first chorus end.
-                            outgoing_cut_sec = first_chorus_end
-                            transition_point = "first chorus end beat align"
-                        else:
-                            # Fallback if chorus is too short/early, but keep the suggested type for log/plan clarity.
-                            print(f"[Warning] Chorus for {last_track_meta['title']} too short/early. Using full track duration as cut point.")
-                            transition_point = "end of track (chorus invalid)"
-
+                    transition_point_val = last_track_meta.get("transition_point", last_full_duration_sec)
+                    min_cut_sec = 30.0
+                    if transition_point_val > max(overlap_sec, min_cut_sec):
+                        outgoing_cut_sec = transition_point_val
+                        transition_point_desc = (
+                            "transition point beat align "
+                            "(hard cut to intro vocals + beats crossfade over 16s)"
+                        )
                     else:
-                        # Should not happen if `suggest_transition_type` worked, but is a safe fallback.
-                        transition_type = "Crossfade" # Downgrade to simple crossfade on the plan
-                        overlap_sec = get_estimated_overlap(transition_type, crossfade_early_ms, 8000, eq_match_ms)
-                        transition_point = "end of track (chorus missing)"
-                
-                # Calculate start time for the track (when it begins playing in the mix).
-                start_sec = last_start_sec + outgoing_cut_sec - overlap_sec 
-                from_track_title = last_track_meta.get('title')
-                comment = f"Transition {from_track_title} (BPM {last_track_meta.get('bpm', 'N/A')}) -> {track.get('title')} (BPM {track.get('bpm', 'N/A')}, original segment: {track.get('original_segment_time', 'N/A')}). Suggested '{transition_type}' at {transition_point}. OTAC: {otac_val:.4f}" 
+                        print(
+                            f"Warning: Short/early transition point in {last_track_meta['title']}. Using full duration."
+                        )
+                        transition_point_desc = "end of track (transition invalid)"
+                else:
+                    transition_point_desc = "end of track"
 
-            # Format start time as string.
+                # Start time.
+                if transition_type == "Chorus Beatmatch":
+                    start_sec = last_start_sec + outgoing_cut_sec
+                else:
+                    start_sec = last_start_sec + outgoing_cut_sec - overlap_sec
+                from_track_title = last_track_meta["title"]
+                comment = (
+                    f"{from_track_title} (BPM {last_track_meta.get('bpm', 'N/A')}) "
+                    f"-> {track['title']} (BPM {track.get('bpm', 'N/A')}, "
+                    f"segment: {track.get('original_segment_time', 'N/A')}). "
+                    f"'{transition_type}' at {transition_point_desc}. OTAC: {otac_val:.4f}"
+                )
+
+            # Add to plan.
             start_str = format_time(start_sec)
+            mixing_plan.append(
+                {
+                    "from_track": from_track_title,
+                    "to_track": track["title"],
+                    "start_time": start_str,
+                    "transition_point": transition_point_desc,
+                    "transition_type": transition_type,
+                    "outgoing_cut_sec": outgoing_cut_sec,
+                    "overlap_sec": overlap_sec,
+                    "otac": float(otac_val),
+                    "comment": comment,
+                }
+            )
 
-            # Add the transition to the mixing plan.
-            mixing_plan.append({
-                "from_track": from_track_title,
-                "to_track": track.get("title"),
-                "start_time": start_str,
-                "transition_point": transition_point,
-                "transition_type": transition_type,
-                "outgoing_cut_sec": outgoing_cut_sec,
-                "overlap_sec": overlap_sec,
-                "otac": float(otac_val),
-                "comment": comment
-            })
-
-            # Update last track info for next iteration.
+            # Update for next.
             last_start_sec = start_sec
             last_full_duration_sec = duration_sec
             last_track_meta = track
 
-        # Save the mixing plan to a JSON file.
+        # Save.
         with open("mixing_plan.json", "w") as f:
             json.dump({"mixing_plan": mixing_plan}, f, indent=2)
-        print("Mixing plan saved to 'mixing_plan.json'")
+        print("Mixing plan saved to 'mixing_plan.json'.")
 
     except Exception as e:
-        print(f"[generate_mixing_plan] Error: {e}")
+        print(f"Error in generate_mixing_plan: {e}")
         raise
 
 
-# ---------------------------
-# Example run
-# ---------------------------
 if __name__ == "__main__":
-    generate_mixing_plan()
+    generate_mixing_plan("metadata.json", "structure.json")

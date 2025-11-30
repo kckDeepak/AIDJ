@@ -1,0 +1,81 @@
+{
+  "mixing_plan": [
+    {
+      "from_track": null,
+      "to_track": "Work Me Out (feat. Wizkid) (Official Music Video)",
+      "start_time": "00:00:00",
+      "transition_point": "downbeat align",
+      "transition_type": "Fade In",
+      "outgoing_cut_sec": null,
+      "overlap_sec": 0.0,
+      "otac": 0.0,
+      "comment": "Start with Work Me Out (feat. Wizkid) (Official Music Video) (BPM: 100, segment: 00:00\u201301:00)."
+    },
+    {
+      "from_track": "Work Me Out (feat. Wizkid) (Official Music Video)",
+      "to_track": "Love Me JeJe (Lyrics)",
+      "start_time": "00:01:11",
+      "transition_point": "transition point beat align (hard cut to intro vocals + beats crossfade over 16s)",
+      "transition_type": "Chorus Beatmatch",
+      "outgoing_cut_sec": 71.5,
+      "overlap_sec": 16.0,
+      "otac": 0.0,
+      "comment": "Work Me Out (feat. Wizkid) (Official Music Video) (BPM 100) -> Love Me JeJe (Lyrics) (BPM 100, segment: 00:00\u201301:00). 'Chorus Beatmatch' at transition point beat align (hard cut to intro vocals + beats crossfade over 16s). OTAC: 0.0000"
+    },
+    {
+      "from_track": "Love Me JeJe (Lyrics)",
+      "to_track": "Jump (Lyrics) ft. Gunna, Skillibeng",
+      "start_time": "00:02:36",
+      "transition_point": "transition point beat align (hard cut to intro vocals + beats crossfade over 16s)",
+      "transition_type": "Chorus Beatmatch",
+      "outgoing_cut_sec": 85.41999816894531,
+      "overlap_sec": 16.0,
+      "otac": 0.0,
+      "comment": "Love Me JeJe (Lyrics) (BPM 100) -> Jump (Lyrics) ft. Gunna, Skillibeng (BPM 100, segment: 00:00\u201301:00). 'Chorus Beatmatch' at transition point beat align (hard cut to intro vocals + beats crossfade over 16s). OTAC: 0.0000"
+    },
+    {
+      "from_track": "Jump (Lyrics) ft. Gunna, Skillibeng",
+      "to_track": "Favourite Girl",
+      "start_time": "00:04:50",
+      "transition_point": "end of track",
+      "transition_type": "Crossfade",
+      "outgoing_cut_sec": 147.47,
+      "overlap_sec": 13.5,
+      "otac": 0.0030386926132325767,
+      "comment": "Jump (Lyrics) ft. Gunna, Skillibeng (BPM 100) -> Favourite Girl (BPM 120, segment: 00:00\u201301:00). 'Crossfade' at end of track. OTAC: 0.0030"
+    },
+    {
+      "from_track": "Favourite Girl",
+      "to_track": "Needle",
+      "start_time": "00:06:01",
+      "transition_point": "transition point beat align (hard cut to intro vocals + beats crossfade over 16s)",
+      "transition_type": "Chorus Beatmatch",
+      "outgoing_cut_sec": 70.81999969482422,
+      "overlap_sec": 16.0,
+      "otac": 0.0,
+      "comment": "Favourite Girl (BPM 120) -> Needle (BPM 120, segment: 00:00\u201301:00). 'Chorus Beatmatch' at transition point beat align (hard cut to intro vocals + beats crossfade over 16s). OTAC: 0.0000"
+    },
+    {
+      "from_track": "Needle",
+      "to_track": "Nasty OFFICIAL VERSION",
+      "start_time": "00:07:07",
+      "transition_point": "transition point beat align (hard cut to intro vocals + beats crossfade over 16s)",
+      "transition_type": "Chorus Beatmatch",
+      "outgoing_cut_sec": 65.44,
+      "overlap_sec": 16.0,
+      "otac": 0.0,
+      "comment": "Needle (BPM 120) -> Nasty OFFICIAL VERSION (BPM 120, segment: 00:00\u201301:00). 'Chorus Beatmatch' at transition point beat align (hard cut to intro vocals + beats crossfade over 16s). OTAC: 0.0000"
+    },
+    {
+      "from_track": "Nasty OFFICIAL VERSION",
+      "to_track": "Tipsy",
+      "start_time": "00:09:49",
+      "transition_point": "end of track",
+      "transition_type": "Crossfade",
+      "outgoing_cut_sec": 176.1,
+      "overlap_sec": 13.5,
+      "otac": 0.0010756420189595194,
+      "comment": "Nasty OFFICIAL VERSION (BPM 120) -> Tipsy (BPM 128, segment: 00:00\u201301:00). 'Crossfade' at end of track. OTAC: 0.0011"
+    }
+  ]
+}
