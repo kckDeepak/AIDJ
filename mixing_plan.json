@@ -47,10 +47,10 @@
     {
       "from_track": "Favourite Girl",
       "to_track": "Needle",
-      "start_time": "00:06:01",
+      "start_time": "00:06:15",
       "transition_point": "transition point beat align (hard cut to intro vocals + beats crossfade over 16s)",
       "transition_type": "Chorus Beatmatch",
-      "outgoing_cut_sec": 70.81999969482422,
+      "outgoing_cut_sec": 85.0,
       "overlap_sec": 16.0,
       "otac": 0.0,
       "comment": "Favourite Girl (BPM 120) -> Needle (BPM 120, segment: 00:00\u201301:00). 'Chorus Beatmatch' at transition point beat align (hard cut to intro vocals + beats crossfade over 16s). OTAC: 0.0000"
@@ -58,7 +58,7 @@
     {
       "from_track": "Needle",
       "to_track": "Nasty OFFICIAL VERSION",
-      "start_time": "00:07:07",
+      "start_time": "00:07:21",
       "transition_point": "transition point beat align (hard cut to intro vocals + beats crossfade over 16s)",
       "transition_type": "Chorus Beatmatch",
       "outgoing_cut_sec": 65.44,
@@ -69,7 +69,7 @@
     {
       "from_track": "Nasty OFFICIAL VERSION",
       "to_track": "Tipsy",
-      "start_time": "00:09:49",
+      "start_time": "00:10:03",
       "transition_point": "end of track",
       "transition_type": "Crossfade",
       "outgoing_cut_sec": 176.1,
