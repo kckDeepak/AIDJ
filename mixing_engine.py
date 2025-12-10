@@ -1,287 +1,368 @@
-# generate_mix.py
-
+# mixing_engine.py
 """
-This module generates a continuous DJ mix by applying transitions based on an analyzed setlist and a mixing plan.
-It supports 'Chorus Beatmatch' and other transitions, with 'Chorus Beatmatch' using a short crossfade logic at the exact transition point.
+DJ Mixing Engine: Chorus Beatmatch + Crossfade + Minor Time-Stretch
 
-Key features:
-- Uses the globally sorted track order from 'mixing_plan.json'.
-- Converts audio between pydub's AudioSegment and NumPy arrays for processing.
-- **Chorus Beatmatch:** Short 2s crossfade (fade out outgoing, fade in incoming) at exact transition point, with tempo stretching to match BPMs. Uses same building logic as crossfade (extracts tail from current mix).
-- **Fallback/Other:** Standard crossfade with configurable overlap.
-- Handles missing files gracefully and normalizes the final mix for consistent loudness.
-
-Dependencies:
-- os: For file path operations.
-- json: For parsing input setlist and mixing plan JSON files.
-- numpy: For numerical operations on audio data.
-- librosa: For audio feature extraction (e.g., time stretch).
-- pydub: For loading, manipulating, and exporting audio files.
+- Reads mixing_plan.json + structure_data.json
+- Applies chorus beatmatch: second song starts at first chorus start of first
+- Fade out first song at first chorus end
+- Minor time-stretching on incoming song to match BPM of outgoing (±2%)
+- Every 5th song: full-song + crossfade
+- Outputs normalized mix.mp3
 """
 
-import os 
-import json 
-import numpy as np 
-import librosa 
-from pydub import AudioSegment 
-from pydub.effects import normalize 
+import os
+import json
+import numpy as np
+from pydub import AudioSegment
+from pydub.effects import normalize
+import librosa
+import scipy.signal
 
-# Define the directory path where local MP3 song files are stored.
 SONGS_DIR = "./songs"
 
-
-# ---------------------------
-# Utility conversions
-# ---------------------------
-def audio_segment_to_np(segment: AudioSegment):
-    """Converts a pydub AudioSegment to a mono float32 NumPy array with values in [-1, 1]."""
-    samples = np.array(segment.get_array_of_samples()) 
-    if segment.channels == 2:
-        samples = samples.reshape((-1, 2)).mean(axis=1) 
-    sr = segment.frame_rate 
-    y = samples.astype(np.float32) / 32768.0 
-    return y, sr
-
-
-def np_to_audio_segment(y: np.ndarray, sr: int):
-    """Converts a mono float32 NumPy array in [-1, 1] to a pydub AudioSegment (mono, 16-bit)."""
-    y_clipped = np.clip(y, -1.0, 1.0) 
-    y_int16 = (y_clipped * 32767.0).astype(np.int16) 
-    return AudioSegment(
-        y_int16.tobytes(), 
-        frame_rate=sr, 
-        sample_width=2, 
-        channels=1 
-    )
-
-
-# ---------------------------
-# Standard crossfade transition
-# ---------------------------
-def apply_transition(segment1: AudioSegment,
-                     segment2: AudioSegment,
-                     transition_type: str,
-                     duration_ms: int = 8000,
-                     early_ms: int = 5500,
-                     otac: float = 0.0,
-                     eq_match_duration_ms: int = 15000):
-    """
-    Applies a crossfade transition between outgoing tail and incoming track.
-    Stretches incoming based on OTAC if provided.
-    """
-    # Compute overlap
-    overlap_ms = duration_ms + early_ms
-    overlap_ms = max(overlap_ms, duration_ms)  # Ensure at least duration
-    overlap_ms = min(overlap_ms, len(segment1), len(segment2))  # Safety
-
-    # Convert to numpy for stretch
-    y1, sr1 = audio_segment_to_np(segment1[-overlap_ms:])
-    y2_full, sr2 = audio_segment_to_np(segment2)
-
-    # Apply OTAC tempo stretch to incoming track if otac != 0
-    if abs(otac) > 0.01:
-        stretch_duration_sec = max(duration_ms, eq_match_duration_ms) / 1000.0
-        rate = 1.0 + otac * stretch_duration_sec / 60.0
-        y2_full = librosa.effects.time_stretch(y2_full, rate=rate)
-
-    segment2_stretched = np_to_audio_segment(y2_full, sr2)
-    segment2_stretched = segment2_stretched.set_frame_rate(segment1.frame_rate).set_channels(1)
-
-    # Extract overlap portions
-    outgoing_tail = segment1[-overlap_ms:]
-    incoming_head = segment2_stretched[:overlap_ms]
-
-    # Standard crossfade
-    faded_out = outgoing_tail.fade_out(overlap_ms)
-    faded_in = incoming_head.fade_in(overlap_ms)
-    crossed = faded_out.overlay(faded_in)
-    return crossed + segment2_stretched[overlap_ms:]
-
-
-# ---------------------------
-# Mix generator
-# ---------------------------
-def generate_mix(analyzed_setlist_json, mixing_plan_json, first_fade_in_ms=5000, crossfade_early_ms=5500, eq_match_ms=15000):
-    """
-    Generates a continuous DJ mix by processing an analyzed setlist and applying transitions from a mixing plan.
-    """
+# ================= SAFE CONVERSIONS =================
+def ms(seconds) -> int:
+    if seconds is None or seconds == "":
+        return 0
     try:
-        # Parse the analyzed setlist JSON string to get all metadata.
-        analyzed_data = json.loads(analyzed_setlist_json)
-        # Load the mixing plan from the specified JSON file.
-        mixing_plan = json.load(open(mixing_plan_json, 'r')).get("mixing_plan", [])
-        
-        full_mix = AudioSegment.empty()  # Initialize an empty AudioSegment for the mix.
-        last_track_start_mix_sec = None  # Track the mix start time (seconds) of the last added track.
-        last_track_meta = None  # Track last track metadata for transitions
-        
-        # Flatten all track metadata into a single dictionary for easy lookup by title.
-        all_tracks_metadata = {}
-        for segment in analyzed_data.get("analyzed_setlist", []):
-            for track in segment.get("analyzed_tracks", []):
-                all_tracks_metadata[track['title']] = track
+        return int(round(float(seconds) * 1000))
+    except (ValueError, TypeError):
+        return 0
 
-        # Iterate over the mixing plan entries (each entry represents the start of a new track).
-        for track_index, plan_entry in enumerate(mixing_plan):
-            to_track_title = plan_entry.get("to_track")
+def safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except:
+        return default
+
+# ================= AUDIO UTILITIES =================
+def audio_segment_to_np(seg: AudioSegment):
+    samples = np.array(seg.get_array_of_samples())
+    if seg.channels == 2:
+        samples = samples.reshape((-1,2)).mean(axis=1)
+    return samples.astype(np.float32) / 32768.0
+
+def np_to_audio_segment(y: np.ndarray, sr: int = 44100):
+    y = np.clip(y, -1.0, 1.0)
+    y_int16 = (y * 32767).astype(np.int16)
+    return AudioSegment(y_int16.tobytes(), frame_rate=sr, sample_width=2, channels=1)
+
+# ================= BEAT ALIGNMENT =================
+def detect_beats(audio_seg: AudioSegment, sr=44100, min_interval_ms=200):
+    """Detect beat positions in audio segment using energy peaks."""
+    y = np.array(audio_seg.get_array_of_samples()).astype(np.float32)
+    if audio_seg.channels == 2:
+        y = y.reshape((-1,2)).mean(axis=1)
+    y = y / (np.max(np.abs(y))+1e-8)
+    
+    # Use RMS energy for beat detection
+    energy = np.abs(y)
+    energy_smooth = scipy.signal.medfilt(energy, kernel_size=101)
+    
+    # Find peaks with proper spacing
+    min_distance = int(sr * min_interval_ms / 1000)
+    peaks, properties = scipy.signal.find_peaks(
+        energy_smooth, 
+        height=0.2, 
+        distance=min_distance,
+        prominence=0.1
+    )
+    
+    # Convert to milliseconds
+    beat_times_ms = (peaks / sr) * 1000
+    return beat_times_ms
+
+def find_best_lag(outgoing: AudioSegment, incoming: AudioSegment):
+    """Find optimal lag to align beats between two audio segments."""
+    outgoing_beats = detect_beats(outgoing)
+    incoming_beats = detect_beats(incoming)
+    
+    if len(outgoing_beats) == 0 or len(incoming_beats) == 0:
+        return 0.0
+    
+    # Use first strong beat as reference
+    target_start = outgoing_beats[0]
+    incoming_start = incoming_beats[0]
+    lag_ms = target_start - incoming_start
+    
+    # Limit lag to ±1 second for safety
+    return np.clip(lag_ms/1000.0, -1.0, 1.0)
+
+# ================= TIME-STRETCH =================
+def time_stretch_audio(audio: AudioSegment, factor: float):
+    """Time-stretch AudioSegment without changing pitch using librosa."""
+    y = audio_segment_to_np(audio)
+    y_stretch = librosa.effects.time_stretch(y, rate=factor)
+    return np_to_audio_segment(y_stretch, sr=audio.frame_rate)
+
+# ================= TRANSITIONS =================
+def apply_chorus_beatmatch(current_track: AudioSegment, incoming_track: AudioSegment, 
+                           chorus_start_ms: int, chorus_end_ms: int, 
+                           fade_duration_ms: int, bpm_from: float, bpm_to: float):
+    """
+    Apply chorus beatmatch transition between two INDIVIDUAL tracks:
+    1. Play current_track up to chorus_start (solo)
+    2. At chorus_start, introduce incoming_track - BOTH play together
+    3. Current track continues playing normally during overlap
+    4. At chorus_end, fade out current_track over fade_duration
+    5. Continue with incoming track solo after fade completes
+    
+    Returns: Combined audio with transition
+    """
+    # Minor time-stretch to match BPM (limit to ±2% for quality)
+    if bpm_from > 0 and bpm_to > 0:
+        stretch_factor = safe_float(bpm_to/bpm_from, 1.0)
+        stretch_factor = np.clip(stretch_factor, 0.98, 1.02)
+        if abs(stretch_factor - 1.0) > 0.01:
+            print(f"  Time-stretching incoming by {stretch_factor:.3f}x ({bpm_to:.1f}/{bpm_from:.1f} BPM)")
+            incoming_track = time_stretch_audio(incoming_track, stretch_factor)
+
+    # Beat alignment: align incoming with chorus section of current
+    chorus_section = current_track[chorus_start_ms:min(chorus_end_ms, len(current_track))]
+    incoming_start = incoming_track[:min(10000, len(incoming_track))]
+    
+    lag_sec = find_best_lag(chorus_section, incoming_start)
+    lag_ms = ms(lag_sec)
+    
+    if abs(lag_ms) > 50:
+        print(f"  Beat alignment: {lag_ms}ms lag adjustment")
+        if lag_ms > 0:
+            incoming_track = AudioSegment.silent(lag_ms) + incoming_track
+        elif lag_ms < 0:
+            incoming_track = incoming_track[-lag_ms:]
+
+    # Part 1: Current track BEFORE chorus starts (solo outgoing)
+    before_chorus = current_track[:chorus_start_ms]
+    
+    # Part 2: Overlap section - both tracks play together
+    # Current track continues from chorus_start to chorus_end + fade_duration
+    overlap_end = min(chorus_end_ms + fade_duration_ms, len(current_track))
+    overlap_duration = overlap_end - chorus_start_ms
+    
+    current_overlap = current_track[chorus_start_ms:overlap_end]
+    incoming_overlap = incoming_track[:overlap_duration]
+    
+    # Fade out current track at chorus_end (during the fade_duration)
+    fade_start_in_overlap = chorus_end_ms - chorus_start_ms
+    if fade_duration_ms > 0 and fade_start_in_overlap < len(current_overlap):
+        # Keep current playing normally until chorus_end, then fade
+        before_fade = current_overlap[:fade_start_in_overlap]
+        fade_section = current_overlap[fade_start_in_overlap:].fade_out(
+            min(fade_duration_ms, len(current_overlap) - fade_start_in_overlap)
+        )
+        current_overlap = before_fade + fade_section
+    
+    # Overlay both tracks during overlap period
+    overlap_mixed = current_overlap.overlay(incoming_overlap)
+    
+    # Part 3: After overlap - incoming track continues solo
+    # Ensure incoming plays for at least 30 seconds total
+    remaining_incoming = incoming_track[overlap_duration:]
+    min_play_time_ms = 30000  # 30 seconds minimum
+    current_incoming_duration = overlap_duration + len(remaining_incoming)
+    
+    if current_incoming_duration < min_play_time_ms:
+        # This shouldn't happen if chorus detection is correct, but safeguard
+        print(f"  Warning: Incoming track plays for only {current_incoming_duration/1000:.1f}s")
+    
+    # Combine all parts sequentially
+    result = before_chorus + overlap_mixed + remaining_incoming
+    
+    print(f"  Transition: {len(before_chorus)/1000:.1f}s solo → "
+          f"{len(overlap_mixed)/1000:.1f}s overlap → "
+          f"{len(remaining_incoming)/1000:.1f}s solo incoming")
+    
+    return normalize(result)
+
+def apply_crossfade(pre_mix: AudioSegment, next_audio: AudioSegment, fade_duration_ms: int = 5000):
+    return pre_mix.append(next_audio, crossfade=fade_duration_ms)
+
+# ================= MAIN MIX =================
+def generate_mix(mixing_plan_json: str = "output/mixing_plan.json", 
+                structure_json: str = "output/structure_data.json",
+                output_path: str = "output/mix.mp3"):
+    print("Loading data...")
+    with open(mixing_plan_json, "r", encoding="utf-8") as f:
+        plan = json.load(f).get("mixing_plan", [])
+    with open(structure_json, "r", encoding="utf-8") as f:
+        structure_data = json.load(f)
+
+    tracks_db = {}
+    for section in structure_data.get("analyzed_setlist", []):
+        for track in section.get("analyzed_tracks", []):
+            tracks_db[track["title"]] = track
+
+    if not plan:
+        print("No mixing plan found!")
+        return
+
+    mix = AudioSegment.empty()
+    previous_track_audio = None
+    previous_track_start_in_mix = 0
+
+    for idx, entry in enumerate(plan):
+        to_title = entry.get("to_track")
+        if not to_title or to_title not in tracks_db:
+            print(f"  [SKIP] Missing track: {to_title}")
+            continue
+
+        to_meta = tracks_db[to_title]
+        to_path = os.path.join(SONGS_DIR, to_meta.get("file",""))
+        if not os.path.exists(to_path):
+            print(f"  [ERROR] File not found: {to_path}")
+            continue
+
+        to_audio = AudioSegment.from_file(to_path)
+        bpm_to = safe_float(to_meta.get("bpm", 0))
+
+        # First track: just add it with fade in
+        if idx == 0:
+            print(f"\n1. {to_title} [Intro]")
+            print(f"   Track duration: {len(to_audio)/1000:.1f}s")
+            mix = to_audio.fade_in(ms(2))
+            previous_track_audio = to_audio
+            previous_track_start_in_mix = 0
+            continue
+
+        # Get transition parameters from mixing plan
+        from_title = entry.get("from_track")
+        if not from_title or from_title not in tracks_db:
+            print(f"\n  [WARN] from_track missing: {from_title}. Appending with crossfade.")
+            mix = mix.append(to_audio, crossfade=2000)
+            previous_track_audio = to_audio
+            previous_track_start_in_mix = len(mix) - len(to_audio)
+            continue
+
+        from_meta = tracks_db[from_title]
+        bpm_from = safe_float(from_meta.get("bpm", 0))
+        
+        # NEW STRUCTURE: Get timing from mixing plan
+        transition_point_sec = safe_float(entry.get("transition_point"), 90.0)
+        incoming_intro_sec = safe_float(entry.get("incoming_intro_duration"), 8.0)
+        bpm_change_point_sec = safe_float(entry.get("bpm_change_point_sec"), 82.0)
+        overlap_duration_sec = safe_float(entry.get("overlap_duration"), 8.0)
+        fade_duration_sec = safe_float(entry.get("fade_duration"), 1.0)
+        
+        transition_point_ms = ms(transition_point_sec)
+        overlap_duration_ms = ms(overlap_duration_sec)
+        fade_duration_ms = ms(fade_duration_sec)
+        
+        print(f"\n{idx+1}. → {to_title}")
+        print(f"   Mix length before: {len(mix)/1000:.1f}s")
+        print(f"   Transition at: {transition_point_sec:.1f}s")
+        print(f"   Incoming intro: {incoming_intro_sec:.1f}s")
+        print(f"   BPM change at: {bpm_change_point_sec:.1f}s")
+        print(f"   Overlap: {overlap_duration_sec:.1f}s, Fade: {fade_duration_sec:.1f}s")
+
+        # Calculate timing positions in the mix
+        transition_point_in_mix = previous_track_start_in_mix + transition_point_ms
+        bpm_change_point_in_mix = previous_track_start_in_mix + ms(bpm_change_point_sec)
+        
+        # Calculate when incoming track should start (based on intro duration)
+        if incoming_intro_sec > 8.0:
+            incoming_start_offset_sec = 8.0
+        else:
+            incoming_start_offset_sec = incoming_intro_sec
+        
+        incoming_start_in_mix = transition_point_in_mix - ms(incoming_start_offset_sec)
+        
+        print(f"   Incoming starts at: {incoming_start_in_mix/1000:.1f}s in mix")
+        print(f"   Transition point: {transition_point_in_mix/1000:.1f}s in mix")
+        
+        # STEP 1: BPM change on previous track 8 seconds before transition
+        # Apply time-stretching to the entire previous track if needed
+        if previous_track_audio and bpm_from > 0 and bpm_to > 0:
+            stretch_factor = safe_float(bpm_to/bpm_from, 1.0)
+            stretch_factor = np.clip(stretch_factor, 0.90, 1.10)  # Allow wider range for DJ mixing
+            if abs(stretch_factor - 1.0) > 0.01:
+                print(f"   BPM change: {bpm_from:.1f} → {bpm_to:.1f} (stretch: {stretch_factor:.3f}x)")
+                
+                # Get the part that needs BPM change (from bpm_change_point to end)
+                bpm_change_offset_in_track = ms(bpm_change_point_sec) - previous_track_start_in_mix
+                if bpm_change_offset_in_track > 0:
+                    # Keep beginning unchanged, stretch the rest
+                    before_bpm_change = mix[:bpm_change_point_in_mix]
+                    after_bpm_change = mix[bpm_change_point_in_mix:]
+                    stretched_section = time_stretch_audio(after_bpm_change, stretch_factor)
+                    mix = before_bpm_change + stretched_section
+        
+        # STEP 2: Beat alignment for incoming track
+        # Get a section from previous track at transition point for beat matching
+        if previous_track_audio:
+            match_section_start = max(0, transition_point_ms - 5000)
+            match_section = previous_track_audio[match_section_start:min(transition_point_ms + 5000, len(previous_track_audio))]
+            incoming_start_section = to_audio[:min(10000, len(to_audio))]
             
-            # --- Get Incoming Track Metadata ---
-            if to_track_title not in all_tracks_metadata:
-                print(f"[generate_mix] Missing metadata for incoming track: {to_track_title}. Skipping.")
-                continue
-            track = all_tracks_metadata[to_track_title]  # to_meta
+            lag_sec = find_best_lag(match_section, incoming_start_section)
+            lag_ms = ms(lag_sec)
+            
+            if abs(lag_ms) > 50:
+                print(f"   Beat alignment: {lag_ms}ms adjustment")
+                if lag_ms > 0:
+                    to_audio = AudioSegment.silent(lag_ms) + to_audio
+                elif lag_ms < 0:
+                    to_audio = to_audio[-lag_ms:]
+        
+        # STEP 3: Overlay incoming track starting at calculated position
+        # Pad incoming to start at the right position in the mix
+        incoming_padded = AudioSegment.silent(incoming_start_in_mix) + to_audio
+        
+        # STEP 4: Create the overlap section (8 seconds at transition point)
+        overlap_end_in_mix = transition_point_in_mix + overlap_duration_ms
+        
+        # Keep mix up to where overlap starts
+        mix_before_overlap = mix[:transition_point_in_mix]
+        
+        # Get the overlap section from previous track (8 seconds after transition)
+        overlap_from_previous = mix[transition_point_in_mix:overlap_end_in_mix]
+        
+        # Get corresponding section from incoming track
+        incoming_at_transition = incoming_start_in_mix
+        overlap_start_in_incoming = transition_point_in_mix - incoming_at_transition
+        overlap_from_incoming = to_audio[int(overlap_start_in_incoming):int(overlap_start_in_incoming + overlap_duration_ms)]
+        
+        # Overlay both tracks during overlap
+        overlapped_section = overlap_from_previous.overlay(overlap_from_incoming)
+        
+        # STEP 5: Fade out previous track during last 1 second of overlap
+        fade_start_in_mix = overlap_end_in_mix - fade_duration_ms
+        
+        # Split overlapped section into non-fade and fade parts
+        non_fade_duration_ms = overlap_duration_ms - fade_duration_ms
+        overlap_before_fade = overlapped_section[:int(non_fade_duration_ms)]
+        overlap_with_fade = overlapped_section[int(non_fade_duration_ms):]
+        
+        # Get incoming audio during fade (no fade on incoming)
+        fade_start_in_incoming = int(overlap_start_in_incoming + non_fade_duration_ms)
+        incoming_during_fade = to_audio[fade_start_in_incoming:fade_start_in_incoming + int(fade_duration_ms)]
+        
+        # Fade out previous from the overlapped section, keep incoming clear
+        # Apply fade to the previous track component only
+        previous_during_fade = overlap_with_fade.fade_out(int(fade_duration_ms))
+        faded_section = incoming_during_fade.overlay(previous_during_fade)
+        
+        # STEP 6: Continue with incoming track only after overlap
+        remaining_incoming_start = int(overlap_start_in_incoming + overlap_duration_ms)
+        remaining_incoming = to_audio[remaining_incoming_start:]
+        
+        # STEP 7: Combine all sections
+        mix = mix_before_overlap + overlap_before_fade + faded_section + remaining_incoming
+        
+        # Update tracking variables
+        previous_track_audio = to_audio
+        previous_track_start_in_mix = incoming_start_in_mix
+        
+        print(f"   Mix length after: {len(mix)/1000:.1f}s")
 
-            transition_type = plan_entry.get("transition_type", "Crossfade") 
-            otac = plan_entry.get("otac", 0.0) 
-            outgoing_cut_sec = plan_entry.get("outgoing_cut_sec") 
-            overlap_sec = plan_entry.get("overlap_sec", 8.0) 
+    print("\n" + "="*60)
+    print("Normalizing & exporting final mix...")
+    final_mix = normalize(mix)
+    final_mix.export(output_path, format="mp3", bitrate="320k",
+                     tags={"artist":"AI DJ","title":"Full-Auto Chorus Mix"})
+    print(f"✅ MIX READY → {output_path} ({len(final_mix)/60000:.1f} minutes)")
+    print("="*60)
 
-            file_path = os.path.join(SONGS_DIR, track["file"]) 
-            if not os.path.exists(file_path):
-                print(f"[generate_mix] Missing file: {file_path}. Skipping track.")
-                continue
-
-            # Load the audio file (incoming track).
-            to_audio = AudioSegment.from_file(file_path)
-
-            if track_index == 0:
-                # --- FIRST TRACK ---
-                fade_dur = int(min(first_fade_in_ms, len(to_audio)))
-                full_mix += to_audio.fade_in(fade_dur)
-                last_track_start_mix_sec = 0.0
-                last_track_meta = track
-            else:
-                # --- SUBSEQUENT TRACKS (TRANSITIONS) ---
-                from_title = plan_entry.get("from_track")
-                from_meta = all_tracks_metadata.get(from_title)
-                if from_meta is None:
-                    print(f"[generate_mix] Missing from metadata for {from_title}. Falling back to crossfade.")
-                    transition_type = "Crossfade"
-                
-                # 1. Calculate the exact mix time of the outgoing track's cut point.
-                trans_start_mix_sec = last_track_start_mix_sec + outgoing_cut_sec
-                trans_start_ms = int(trans_start_mix_sec * 1000 + 0.5)
-
-                # Prepare parameters based on transition type
-                if transition_type == "Chorus Beatmatch":
-                    # Short 2s crossfade at exact point, with BPM matching
-                    fade_ms = 2000
-                    overlap_ms = fade_ms
-                    duration_ms = fade_ms
-                    early_ms = 0
-                    effective_otac = 0.0  # Will handle BPM stretch separately
-
-                    # Stretch incoming to match outgoing BPM
-                    bpm_from = last_track_meta.get('bpm', 120)
-                    bpm_to = track.get('bpm', 120)
-                    if abs(bpm_from - bpm_to) > 0.5:
-                        y_to, sr_to = audio_segment_to_np(to_audio)
-                        rate = float(bpm_from) / float(bpm_to)
-                        y_st = librosa.effects.time_stretch(y_to, rate=rate)
-                        to_audio = np_to_audio_segment(y_st, sr_to)
-                        print(f"[generate_mix] Stretched '{to_track_title}' to match BPM {bpm_from} from {bpm_to}")
-                else:
-                    # Standard crossfade parameters
-                    duration_ms = 8000
-                    early_ms = crossfade_early_ms
-                    overlap_ms = int(overlap_sec * 1000)  # Use from plan or default
-                    overlap_ms = duration_ms + early_ms  # Override with standard
-                    effective_otac = otac
-
-                # 2. Determine the start of the overlap/tail segment in the current mix.
-                tail_start_ms = max(0, trans_start_ms - overlap_ms)
-
-                # 3. Trim the mix and extract the necessary segments.
-                pre_transition = full_mix[:tail_start_ms]  # Audio before the overlap starts.
-                tail = full_mix[tail_start_ms:trans_start_ms]  # The overlap segment of the outgoing track.
-                
-                if len(tail) < 500:
-                    print(f"[generate_mix] Warning: Tail for '{plan_entry.get('from_track')}' is too short ({len(tail)}ms). Appending fully.")
-                    full_mix += to_audio
-                    last_track_start_mix_sec = len(full_mix) / 1000.0 - len(to_audio) / 1000.0
-                    last_track_meta = track
-                    continue
-
-                # 4. Apply the transition.
-                trans_audio = apply_transition(
-                    tail, to_audio, transition_type,
-                    duration_ms=duration_ms,
-                    early_ms=early_ms,
-                    otac=effective_otac,
-                    eq_match_duration_ms=eq_match_ms
-                )
-                
-                # 5. Rebuild full_mix.
-                full_mix = pre_transition + trans_audio
-                
-                # 6. Update last start time for the *newly added* track.
-                last_track_start_mix_sec = trans_start_mix_sec - (overlap_ms / 1000.0)
-                
-                last_track_meta = track
-
-        # Normalize the final mix for consistent loudness and export as MP3.
-        full_mix = normalize(full_mix)
-        full_mix.export("mix.mp3", format="mp3")
-        print("Mix exported to 'mix.mp3'")
-
-    except Exception as e:
-        print(f"[generate_mix] Error: {e}")
-        raise
-
-
-# ---------------------------
-# Example run
-# ---------------------------
 if __name__ == "__main__":
-    """
-    Entry point for testing the mix generator with a sample analyzed setlist and mixing plan.
-    """
-    # Sample setlist with chorus times added for proper Chorus Beatmatch testing.
-    sample_analyzed_setlist_json = '''
-    {
-        "analyzed_setlist": [
-            {
-                "time": "19:00–20:00",
-                "analyzed_tracks": [
-                    {
-                        "title": "Tum Hi Ho",
-                        "artist": "Arijit Singh",
-                        "file": "Arijit Singh - Tum Hi Ho.mp3",
-                        "bpm": 94,
-                        "key_semitone": 9,
-                        "scale": "major",
-                        "genre": "bollywood",
-                        "energy": 0.45,
-                        "valence": 0.32,
-                        "danceability": 0.52,
-                        "has_vocals": true,
-                        "segments": [{"label": "verse", "start": 30.0, "end": 60.0}],
-                        "choruses": [{"start": 60.0, "end": 90.0}], 
-                        "chroma_matrix": null,
-                        "transition": "Fade In",
-                        "notes": "Balanced Vibe track. Genre: bollywood."
-                    },
-                    {
-                        "title": "No Scrubs",
-                        "artist": "TLC",
-                        "file": "TLC - No Scrubs.mp3",
-                        "bpm": 93,
-                        "key_semitone": 8,
-                        "scale": "minor",
-                        "genre": "r&b",
-                        "energy": 0.7,
-                        "valence": 0.6,
-                        "danceability": 0.8,
-                        "has_vocals": true,
-                        "segments": [{"label": "verse", "start": 20.0, "end": 50.0}],
-                        "choruses": [{"start": 45.0, "end": 75.0}], 
-                        "chroma_matrix": null,
-                        "transition": "Crossfade",
-                        "notes": "Dance Floor Filler track. Genre: r&b."
-                    }
-                ]
-            }
-        ]
-    }
-    '''
-    generate_mix(sample_analyzed_setlist_json, "mixing_plan.json")
+    generate_mix()
