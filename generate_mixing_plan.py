@@ -4,10 +4,9 @@
 DJ Mixing Plan Generator (Ready for Mixing Engine)
 
 - Reads basic_setlist.json + structure_data.json
-- Sorts songs globally by BPM
-- Sliding 5-song window BPM averaging for smooth ramp
+- Uses harmonic mixing (Camelot Wheel) for key compatibility
+- Dynamic overlap duration based on energy difference
 - Chorus Beatmatch for normal tracks
-- Full-song + crossfade every 5th song
 - Outputs mixing_plan.json with exact timings for fade-in/out
 """
 
@@ -17,6 +16,102 @@ from datetime import datetime, timedelta
 import librosa
 
 SONGS_DIR = "./songs"
+
+# ================= CAMELOT WHEEL (HARMONIC MIXING) =================
+# Musical key compatibility for smooth DJ transitions
+CAMELOT_WHEEL = {
+    # Major keys
+    "C": {"compatible": ["G", "F", "Am"], "energy_boost": ["G"], "energy_drop": ["Am"]},
+    "C#": {"compatible": ["G#", "F#", "A#m"], "energy_boost": ["G#"], "energy_drop": ["A#m"]},
+    "D": {"compatible": ["A", "G", "Bm"], "energy_boost": ["A"], "energy_drop": ["Bm"]},
+    "D#": {"compatible": ["A#", "G#", "Cm"], "energy_boost": ["A#"], "energy_drop": ["Cm"]},
+    "E": {"compatible": ["B", "A", "C#m"], "energy_boost": ["B"], "energy_drop": ["C#m"]},
+    "F": {"compatible": ["C", "A#", "Dm"], "energy_boost": ["C"], "energy_drop": ["Dm"]},
+    "F#": {"compatible": ["C#", "B", "D#m"], "energy_boost": ["C#"], "energy_drop": ["D#m"]},
+    "G": {"compatible": ["D", "C", "Em"], "energy_boost": ["D"], "energy_drop": ["Em"]},
+    "G#": {"compatible": ["D#", "C#", "Fm"], "energy_boost": ["D#"], "energy_drop": ["Fm"]},
+    "A": {"compatible": ["E", "D", "F#m"], "energy_boost": ["E"], "energy_drop": ["F#m"]},
+    "A#": {"compatible": ["F", "D#", "Gm"], "energy_boost": ["F"], "energy_drop": ["Gm"]},
+    "B": {"compatible": ["F#", "E", "G#m"], "energy_boost": ["F#"], "energy_drop": ["G#m"]},
+    
+    # Minor keys
+    "Am": {"compatible": ["Em", "Dm", "C"], "energy_boost": ["C"], "energy_drop": ["Dm"]},
+    "A#m": {"compatible": ["Fm", "D#m", "C#"], "energy_boost": ["C#"], "energy_drop": ["D#m"]},
+    "Bm": {"compatible": ["F#m", "Em", "D"], "energy_boost": ["D"], "energy_drop": ["Em"]},
+    "Cm": {"compatible": ["Gm", "Fm", "D#"], "energy_boost": ["D#"], "energy_drop": ["Fm"]},
+    "C#m": {"compatible": ["G#m", "F#m", "E"], "energy_boost": ["E"], "energy_drop": ["F#m"]},
+    "Dm": {"compatible": ["Am", "Gm", "F"], "energy_boost": ["F"], "energy_drop": ["Gm"]},
+    "D#m": {"compatible": ["A#m", "G#m", "F#"], "energy_boost": ["F#"], "energy_drop": ["G#m"]},
+    "Em": {"compatible": ["Bm", "Am", "G"], "energy_boost": ["G"], "energy_drop": ["Am"]},
+    "Fm": {"compatible": ["Cm", "A#m", "G#"], "energy_boost": ["G#"], "energy_drop": ["A#m"]},
+    "F#m": {"compatible": ["C#m", "Bm", "A"], "energy_boost": ["A"], "energy_drop": ["Bm"]},
+    "Gm": {"compatible": ["Dm", "Cm", "A#"], "energy_boost": ["A#"], "energy_drop": ["Cm"]},
+    "G#m": {"compatible": ["D#m", "C#m", "B"], "energy_boost": ["B"], "energy_drop": ["C#m"]},
+}
+
+def calculate_key_compatibility(key1: str, key2: str) -> float:
+    """
+    Calculate harmonic compatibility score between two musical keys.
+    Returns: 1.0 (perfect), 0.5 (acceptable), -1.0 (clash)
+    """
+    if not key1 or not key2 or key1 not in CAMELOT_WHEEL:
+        return 0.5  # Unknown, assume neutral
+    
+    if key1 == key2:
+        return 1.0  # Same key = perfect
+    
+    compatible_keys = CAMELOT_WHEEL[key1].get("compatible", [])
+    if key2 in compatible_keys:
+        return 1.0  # Harmonically compatible
+    
+    # Check if relative minor/major
+    if key1.endswith("m") and key2 == key1[:-1]:  # Am -> A
+        return 0.8
+    if not key1.endswith("m") and key2 == key1 + "m":  # A -> Am
+        return 0.8
+    
+    return -1.0  # Key clash - will sound bad
+
+def calculate_dynamic_overlap(from_track: dict, to_track: dict) -> float:
+    """
+    Calculate optimal overlap duration based on musical characteristics.
+    Real DJs vary overlap based on energy, genre, and key compatibility.
+    """
+    # Base overlap: 8 seconds
+    base_overlap = 8.0
+    
+    # Get track properties
+    from_bpm = from_track.get("bpm", 120)
+    to_bpm = to_track.get("bpm", 120)
+    from_key = from_track.get("key", "")
+    to_key = to_track.get("key", "")
+    from_genre = from_track.get("genre", "").lower()
+    to_genre = to_track.get("genre", "").lower()
+    
+    # Factor 1: BPM difference (larger = longer transition)
+    bpm_diff = abs(from_bpm - to_bpm)
+    if bpm_diff > 20:
+        base_overlap += 4.0  # Need more time to adjust
+    elif bpm_diff > 10:
+        base_overlap += 2.0
+    
+    # Factor 2: Key compatibility (bad match = shorter transition)
+    key_score = calculate_key_compatibility(from_key, to_key)
+    if key_score < 0:  # Key clash
+        base_overlap -= 2.0  # Quick transition to minimize clash
+        print(f"    ⚠️ Key clash: {from_key} → {to_key}, shorter transition")
+    elif key_score >= 1.0:  # Perfect match
+        base_overlap += 2.0  # Can blend longer
+        print(f"    ✅ Perfect key match: {from_key} → {to_key}")
+    
+    # Factor 3: Genre-specific rules
+    if "edm" in from_genre or "edm" in to_genre or "house" in from_genre or "house" in to_genre:
+        base_overlap += 4.0  # Electronic music = longer blends
+    elif "hip" in from_genre or "hip" in to_genre or "rap" in from_genre or "rap" in to_genre:
+        base_overlap -= 2.0  # Hip-hop = quicker cuts
+    
+    # Clamp to reasonable range (4-16 seconds)
+    return max(4.0, min(16.0, base_overlap))
 
 
 def load_json(path: str):
@@ -34,7 +129,8 @@ def get_chorus_duration(track: dict) -> float:
 
 def select_tracks_in_order(basic_setlist: dict, structure_data: dict) -> list[dict]:
     """
-    Merge basic setlist and analyzed structure data IN ORIGINAL ORDER (no BPM sorting).
+    Merge basic setlist and analyzed structure data, then SORT BY BPM (lowest to highest).
+    This creates a smooth energy progression for DJ mixing.
     """
     all_tracks = []
     analyzed_dict = {}
@@ -53,7 +149,14 @@ def select_tracks_in_order(basic_setlist: dict, structure_data: dict) -> list[di
             else:
                 print(f"Warning: '{title}' not found in structure data; skipping.")
 
-    # NO SORTING - keep in OpenAI's optimal DJ order
+    # SORT BY BPM - lowest to highest for smooth energy progression
+    all_tracks.sort(key=lambda t: t.get("bpm", 120))
+    
+    print(f"\n🎵 Song order (sorted by BPM):")
+    for i, track in enumerate(all_tracks, 1):
+        print(f"  {i}. {track['title']} - {track.get('bpm', 'N/A')} BPM")
+    print()
+    
     return all_tracks
 
 
@@ -96,28 +199,37 @@ def generate_mixing_plan(
                 bpm_change_point = None
                 comment = f"Start with {track['title']} (BPM {track.get('bpm', 'N/A')})"
             else:
-                # Calculate when to start incoming track based on vocal overlap rules
+                # === PROFESSIONAL DJ TRANSITION CALCULATION ===
+                
+                # Get track properties
                 from_transition_point = last_track.get("transition_point", 70.0)
                 to_intro_duration = track.get("intro_duration", 8.0)
                 to_has_early_vocals = track.get("has_vocals_in_first_8s", False)
                 
+                # Calculate dynamic overlap duration based on musical characteristics
+                dynamic_overlap = calculate_dynamic_overlap(last_track, track)
+                
+                # Check key compatibility
+                from_key = last_track.get("key", "")
+                to_key = track.get("key", "")
+                key_score = calculate_key_compatibility(from_key, to_key)
+                
                 # RULE: If incoming song has vocals in first 8s, previous transition must be at line end
-                # Otherwise, transition can be 8s before line end
+                # Otherwise, transition can be earlier
                 # This prevents vocal overlap
                 
                 if to_has_early_vocals:
                     # Incoming has vocals in first 8s - transition at line end
-                    # Start incoming based on intro duration
-                    if to_intro_duration > 8.0:
-                        incoming_start_offset = 8.0
+                    if to_intro_duration > dynamic_overlap:
+                        incoming_start_offset = dynamic_overlap
                     else:
                         incoming_start_offset = to_intro_duration
                     
-                    overlap_comment = "Line end transition (incoming has early vocals)"
+                    overlap_comment = f"Line end transition ({dynamic_overlap:.1f}s, incoming has early vocals)"
                 else:
-                    # No vocals in first 8s - can start earlier
-                    incoming_start_offset = 8.0
-                    overlap_comment = "Standard 8s overlap (no early vocals)"
+                    # No vocals in first 8s - can use full dynamic overlap
+                    incoming_start_offset = dynamic_overlap
+                    overlap_comment = f"Dynamic {dynamic_overlap:.1f}s overlap (no early vocals)"
                 
                 incoming_start_sec = last_start_sec + from_transition_point - incoming_start_offset
                 
@@ -128,9 +240,16 @@ def generate_mixing_plan(
                 transition_point = from_transition_point
                 incoming_intro = to_intro_duration
                 
+                # Enhanced comment with key info
+                key_info = ""
+                if key_score >= 1.0:
+                    key_info = f"✓ Keys match ({from_key}→{to_key})"
+                elif key_score < 0:
+                    key_info = f"⚠ Key clash ({from_key}→{to_key})"
+                
                 comment = (
                     f"{last_track['title']} (BPM {last_track.get('bpm', 120)}) -> {track['title']} "
-                    f"(BPM {track.get('bpm', 120)}). {overlap_comment}. "
+                    f"(BPM {track.get('bpm', 120)}). {overlap_comment}. {key_info}. "
                     f"Transition at {from_transition_point:.1f}s, BPM change at {bpm_change_point - last_start_sec:.1f}s"
                 )
 

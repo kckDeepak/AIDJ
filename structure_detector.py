@@ -93,19 +93,71 @@ def transcribe_song_fast(client, audio_path):
 
 
 def extract_beat_times_fast(audio_path, max_duration=90):
-    """Extract beat timestamps - OPTIMIZED: only first 90 seconds."""
+    """
+    Extract beat timestamps and phrase boundaries - OPTIMIZED: only first 90 seconds.
+    Returns beat times, tempo, and phrase boundaries (every 8 bars).
+    """
     if librosa is None:
-        return np.array([]), 120.0
+        return np.array([]), 120.0, np.array([])
     
     try:
         # Only load first 90 seconds for speed
         y, sr = librosa.load(audio_path, sr=22050, duration=max_duration)  # Lower sample rate = faster
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
         beat_times = librosa.frames_to_time(beats, sr=sr)
-        return beat_times, tempo
+        
+        # Calculate phrase boundaries (every 8 bars = 32 beats)
+        beats_per_phrase = 32  # 8 bars × 4 beats
+        phrase_boundaries = []
+        for i in range(0, len(beat_times), beats_per_phrase):
+            if i < len(beat_times):
+                phrase_boundaries.append(beat_times[i])
+        
+        return beat_times, tempo, np.array(phrase_boundaries)
     except Exception as e:
         print(f"Beat detection failed: {e}")
-        return np.array([]), 120.0
+        return np.array([]), 120.0, np.array([])
+
+
+def snap_to_phrase_boundary(target_time, phrase_boundaries, direction="nearest"):
+    """
+    Snap a target time to the nearest musical phrase boundary.
+    This ensures transitions happen at natural musical breaks (every 8 bars).
+    
+    Args:
+        target_time: Desired transition time in seconds
+        phrase_boundaries: Array of phrase boundary times
+        direction: "nearest", "before", or "after"
+    
+    Returns:
+        Snapped time at phrase boundary
+    """
+    if len(phrase_boundaries) == 0:
+        return target_time
+    
+    phrase_boundaries = np.array(phrase_boundaries)
+    
+    if direction == "nearest":
+        idx = np.argmin(np.abs(phrase_boundaries - target_time))
+        snapped_time = phrase_boundaries[idx]
+    elif direction == "before":
+        # Get all boundaries at or before target
+        valid = phrase_boundaries[phrase_boundaries <= target_time]
+        if len(valid) == 0:
+            snapped_time = phrase_boundaries[0]
+        else:
+            snapped_time = valid[-1]  # Last (closest) boundary before target
+    else:  # after
+        # Get all boundaries at or after target
+        valid = phrase_boundaries[phrase_boundaries >= target_time]
+        if len(valid) == 0:
+            snapped_time = phrase_boundaries[-1]
+        else:
+            snapped_time = valid[0]  # First (closest) boundary after target
+    
+    if abs(snapped_time - target_time) > 2.0:  # Only log if significant change
+        print(f"  → Snapped {target_time:.1f}s to phrase boundary at {snapped_time:.1f}s")
+    return float(snapped_time)
 
 
 def ask_gpt4o_for_transition_point_fast(segments, beats_str, title, artist, duration):
@@ -206,8 +258,8 @@ def analyze_structure_fast(title, artist, filename, bpm, SONGS_DIR="./songs"):
         duration = transcript.get("duration", 180.0)
         segments = transcript.get("segments", [])
         
-        # Step 2: Fast beat extraction (only first 90s, lower sample rate)
-        beats, tempo = extract_beat_times_fast(file_path, max_duration=90)
+        # Step 2: Fast beat extraction with phrase boundaries (only first 90s)
+        beats, tempo, phrase_boundaries = extract_beat_times_fast(file_path, max_duration=90)
         beats_str = ", ".join(f"{t:.1f}" for t in beats[:100])  # Only first 100 beats
         
         # Step 3: Fast GPT analysis (gpt-4o-mini, segment-level only)
@@ -217,14 +269,19 @@ def analyze_structure_fast(title, artist, filename, bpm, SONGS_DIR="./songs"):
         has_vocals_in_first_8s = result.get("has_vocals_in_first_8s", False)
         transition_is_line_end = result.get("transition_is_line_end", True)
         
-        # Step 4: Beat alignment (if beats available)
-        if len(beats) > 0:
-            # Find nearest beat to transition point
+        # Step 4: PHRASE-BASED ALIGNMENT (Professional DJ timing)
+        if len(phrase_boundaries) > 0:
+            # Snap transition to nearest phrase boundary (every 8 bars)
+            transition_point = snap_to_phrase_boundary(transition_point, phrase_boundaries, direction="nearest")
+            
+            # Snap intro end to phrase boundary if close
+            intro_duration = snap_to_phrase_boundary(intro_duration, phrase_boundaries, direction="nearest")
+        elif len(beats) > 0:
+            # Fallback: at least align to beats
             transition_candidates = beats[(beats >= transition_point - 5) & (beats <= transition_point + 5)]
             if len(transition_candidates) > 0:
                 transition_point = float(transition_candidates[np.argmin(np.abs(transition_candidates - transition_point))])
             
-            # Find nearest beat to intro end
             intro_candidates = beats[(beats >= intro_duration - 2) & (beats <= intro_duration + 2)]
             if len(intro_candidates) > 0:
                 intro_duration = float(intro_candidates[np.argmin(np.abs(intro_candidates - intro_duration))])
@@ -233,7 +290,7 @@ def analyze_structure_fast(title, artist, filename, bpm, SONGS_DIR="./songs"):
         transition_point = float(np.clip(transition_point, 50.0, min(120.0, duration - 10.0)))
         intro_duration = float(np.clip(intro_duration, 0.0, 20.0))
         
-        print(f"  ✓ Transition: {transition_point:.1f}s, Intro: {intro_duration:.1f}s")
+        print(f"  ✓ Transition: {transition_point:.1f}s (phrase-aligned), Intro: {intro_duration:.1f}s")
         print(f"    Vocals in first 8s: {has_vocals_in_first_8s}, Line end: {transition_is_line_end}")
         
         structure_data = {

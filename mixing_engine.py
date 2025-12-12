@@ -17,8 +17,73 @@ from pydub import AudioSegment
 from pydub.effects import normalize
 import librosa
 import scipy.signal
+from scipy.signal import butter, sosfilt
 
 SONGS_DIR = "./songs"
+
+# ================= GENRE-SPECIFIC DJ MIXING RULES =================
+GENRE_MIXING_RULES = {
+    "edm": {
+        "name": "EDM/Electronic",
+        "overlap_multiplier": 2.0,  # Longer blends (16s instead of 8s)
+        "use_breakdown": True,
+        "eq_filter_strength": 1.5,  # Stronger filtering
+        "description": "Extended blends, use breakdowns for mixing"
+    },
+    "house": {
+        "name": "House",
+        "overlap_multiplier": 1.5,  # 12s overlaps
+        "isolate_drums": True,
+        "eq_filter_strength": 1.2,
+        "description": "Longer blends, drum-focused transitions"
+    },
+    "hip-hop": {
+        "name": "Hip-Hop/Rap",
+        "overlap_multiplier": 0.5,  # Quick cuts (4s)
+        "cut_style": "quick",
+        "eq_filter_strength": 0.8,  # Less filtering
+        "description": "Quick cuts, beat juggling style"
+    },
+    "rap": {
+        "name": "Rap",
+        "overlap_multiplier": 0.5,
+        "cut_style": "quick",
+        "eq_filter_strength": 0.8,
+        "description": "Quick cuts, minimal overlap"
+    },
+    "pop": {
+        "name": "Pop",
+        "overlap_multiplier": 1.0,  # Standard 8s
+        "eq_filter_strength": 1.0,
+        "description": "Standard transitions"
+    },
+    "rock": {
+        "name": "Rock",
+        "overlap_multiplier": 0.75,  # Slightly shorter (6s)
+        "eq_filter_strength": 0.9,
+        "description": "Moderate overlaps, energy-focused"
+    }
+}
+
+def get_genre_rules(genre):
+    """
+    Get mixing rules for a specific genre.
+    Returns default if genre not found.
+    """
+    genre_lower = genre.lower() if genre else "unknown"
+    
+    # Check for exact match
+    for key, rules in GENRE_MIXING_RULES.items():
+        if key in genre_lower:
+            return rules
+    
+    # Default rules
+    return {
+        "name": "Default",
+        "overlap_multiplier": 1.0,
+        "eq_filter_strength": 1.0,
+        "description": "Standard transitions"
+    }
 
 # ================= SAFE CONVERSIONS =================
 def ms(seconds) -> int:
@@ -48,6 +113,83 @@ def np_to_audio_segment(y: np.ndarray, sr: int = 44100):
     y = np.clip(y, -1.0, 1.0)
     y_int16 = (y * 32767).astype(np.int16)
     return AudioSegment(y_int16.tobytes(), frame_rate=sr, sample_width=2, channels=1)
+
+# ================= EQ FILTERING (PROFESSIONAL DJ MIXING) =================
+def apply_lowpass_filter(audio: AudioSegment, cutoff_hz: float = 8000):
+    """
+    Apply low-pass filter to audio (cuts high frequencies).
+    Used on OUTGOING track during fadeout to prevent frequency clash.
+    """
+    y = audio_segment_to_np(audio)
+    sr = audio.frame_rate
+    
+    # Ensure cutoff is below Nyquist frequency (sr/2)
+    nyquist = sr / 2.0
+    cutoff_hz = min(cutoff_hz, nyquist * 0.95)  # 95% of Nyquist for safety
+    
+    # Design Butterworth low-pass filter
+    sos = butter(4, cutoff_hz, btype='lowpass', fs=sr, output='sos')
+    y_filtered = sosfilt(sos, y)
+    
+    return np_to_audio_segment(y_filtered, sr=sr)
+
+def apply_highpass_filter(audio: AudioSegment, cutoff_hz: float = 200):
+    """
+    Apply high-pass filter to audio (cuts low frequencies/bass).
+    Used on INCOMING track during intro to prevent bass clash.
+    """
+    y = audio_segment_to_np(audio)
+    sr = audio.frame_rate
+    
+    # Ensure cutoff is valid (must be > 0 and < Nyquist)
+    nyquist = sr / 2.0
+    cutoff_hz = max(20, min(cutoff_hz, nyquist * 0.95))  # Between 20Hz and 95% Nyquist
+    
+    # Design Butterworth high-pass filter
+    sos = butter(4, cutoff_hz, btype='highpass', fs=sr, output='sos')
+    y_filtered = sosfilt(sos, y)
+    
+    return np_to_audio_segment(y_filtered, sr=sr)
+
+def apply_progressive_eq(audio: AudioSegment, filter_type: str = "lowpass"):
+    """
+    Apply EQ filter that gradually increases in strength.
+    Creates smooth transition instead of sudden frequency cut.
+    """
+    duration_ms = len(audio)
+    if duration_ms < 100:
+        return audio
+    
+    sr = audio.frame_rate
+    nyquist = sr / 2.0
+    num_chunks = 10
+    chunk_size = duration_ms // num_chunks
+    
+    result = AudioSegment.empty()
+    
+    for i in range(num_chunks):
+        start = i * chunk_size
+        end = min((i + 1) * chunk_size, duration_ms)
+        chunk = audio[start:end]
+        
+        # Gradually increase filter strength
+        progress = (i + 1) / num_chunks
+        
+        if filter_type == "lowpass":
+            # Start at 12kHz (or safe limit), end at 4kHz (or safe limit)
+            max_cutoff = min(12000, nyquist * 0.95)
+            min_cutoff = min(4000, nyquist * 0.5)
+            cutoff = max_cutoff - ((max_cutoff - min_cutoff) * progress)
+            filtered = apply_lowpass_filter(chunk, cutoff)
+        else:  # highpass
+            # Start at 100Hz, end at 300Hz
+            cutoff = 100 + (200 * progress)
+            filtered = apply_highpass_filter(chunk, cutoff)
+        
+        result += filtered
+    
+    return result
+
 
 # ================= BEAT ALIGNMENT =================
 def detect_beats(audio_seg: AudioSegment, sr=44100, min_interval_ms=200):
@@ -144,18 +286,26 @@ def apply_chorus_beatmatch(current_track: AudioSegment, incoming_track: AudioSeg
     current_overlap = current_track[chorus_start_ms:overlap_end]
     incoming_overlap = incoming_track[:overlap_duration]
     
+    # === PROFESSIONAL DJ EQ MIXING ===
+    # Apply low-pass filter to outgoing track (reduce highs to prevent clash)
+    print(f"  Applying EQ: Low-pass on outgoing, High-pass on incoming")
+    current_overlap_filtered = apply_progressive_eq(current_overlap, filter_type="lowpass")
+    
+    # Apply high-pass filter to incoming track intro (reduce bass initially)
+    incoming_overlap_filtered = apply_progressive_eq(incoming_overlap, filter_type="highpass")
+    
     # Fade out current track at chorus_end (during the fade_duration)
     fade_start_in_overlap = chorus_end_ms - chorus_start_ms
-    if fade_duration_ms > 0 and fade_start_in_overlap < len(current_overlap):
+    if fade_duration_ms > 0 and fade_start_in_overlap < len(current_overlap_filtered):
         # Keep current playing normally until chorus_end, then fade
-        before_fade = current_overlap[:fade_start_in_overlap]
-        fade_section = current_overlap[fade_start_in_overlap:].fade_out(
-            min(fade_duration_ms, len(current_overlap) - fade_start_in_overlap)
+        before_fade = current_overlap_filtered[:fade_start_in_overlap]
+        fade_section = current_overlap_filtered[fade_start_in_overlap:].fade_out(
+            min(fade_duration_ms, len(current_overlap_filtered) - fade_start_in_overlap)
         )
-        current_overlap = before_fade + fade_section
+        current_overlap_filtered = before_fade + fade_section
     
-    # Overlay both tracks during overlap period
-    overlap_mixed = current_overlap.overlay(incoming_overlap)
+    # Overlay both tracks during overlap period (now with EQ filtering)
+    overlap_mixed = current_overlap_filtered.overlay(incoming_overlap_filtered)
     
     # Part 3: After overlap - incoming track continues solo
     # Ensure incoming plays for at least 30 seconds total

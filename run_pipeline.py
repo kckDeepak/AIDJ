@@ -124,7 +124,7 @@ def run_pipeline(user_input: str):
 if __name__ == "__main__":
     # Example: Event-based user input
     user_input = (
-        "Generate a mix between songs by michael jackson"
+        "Generate a mix for all songs"
     )
     
     # Duration will be auto-calculated from time range (7pm-10pm = 180 minutes)

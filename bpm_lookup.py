@@ -76,7 +76,8 @@ def save_cached_metadata(filename, metadata):
 def estimate_bpm_with_librosa(audio_path):
     """
     Fallback BPM estimation using librosa beat tracking.
-    Returns estimated BPM or None if failed.
+    Also calculates energy level for professional DJ mixing.
+    Returns dict with bpm and energy, or None if failed.
     """
     if librosa is None:
         print("⚠ librosa not available for BPM estimation")
@@ -94,10 +95,18 @@ def estimate_bpm_with_librosa(audio_path):
         # tempo is returned as float, convert to int
         bpm = int(round(tempo))
         
+        # Calculate energy level (RMS)
+        rms = librosa.feature.rms(y=y)[0]
+        energy = float(np.mean(rms))
+        
+        # Normalize energy to 0-1 scale
+        # Typical RMS values: quiet=0.01, normal=0.05-0.15, loud=0.3+
+        energy_normalized = min(1.0, energy / 0.25)
+        
         # Validate BPM is in reasonable range
         if 60 <= bpm <= 220:
-            print(f"  ✓ Librosa estimated BPM: {bpm}")
-            return bpm
+            print(f"  ✓ Librosa: BPM={bpm}, Energy={energy_normalized:.2f}")
+            return {"bpm": bpm, "energy": energy_normalized}
         else:
             print(f"  ⚠ Librosa BPM out of range: {bpm}, using default")
             return None
@@ -109,72 +118,75 @@ def estimate_bpm_with_librosa(audio_path):
 
 def refine_bpm(title, artist, audio_file=None):
     """
-    Targeted OpenAI call to get precise BPM from music databases.
-    Falls back to librosa beat tracking if OpenAI fails.
+    BPM detection using librosa beat tracking only.
+    OpenAI BPM lookup disabled - using local librosa analysis for accuracy.
     """
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o",  # Using gpt-4o for better accuracy
-            messages=[
-                {
-                    "role": "system", 
-                    "content": """You are a music database expert. You MUST provide the EXACT BPM from sources like Tunebat, SongBPM, or GetSongBPM.
-
-CRITICAL: Return the precise BPM - NOT rounded to 100, 120, etc.
-
-Examples of CORRECT responses:
-- "Blinding Lights" by The Weeknd → 171
-- "Levitating" by Dua Lipa → 103
-- "Peaches" by Justin Bieber → 90
-- "Bad Guy" by Billie Eilish → 135
-
-Return ONLY the number. Nothing else."""
-                },
-                {
-                    "role": "user", 
-                    "content": f"BPM of '{title}' by {artist}"
-                }
-            ],
-            temperature=0.0,
-            max_tokens=5
-        )
-        bpm_text = response.choices[0].message.content.strip()
-        
-        # Extract just the number
-        bpm_match = re.search(r'\d+', bpm_text)
-        if bpm_match:
-            bpm = int(bpm_match.group())
-            if 60 <= bpm <= 220:
-                # Check if it's a suspicious round number - verify it
-                if bpm % 10 == 0 and bpm in [100, 110, 120, 130, 140, 150]:
-                    print(f"⚠ Got round number {bpm} for '{title}', verifying...")
-                    # Quick retry with more specific prompt
-                    verify_response = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "Return EXACT BPM from Tunebat.com or GetSongBPM.com. If it's truly 100 or 120, confirm. If it's close like 104 or 118, return that exact number."},
-                            {"role": "user", "content": f"Verify: Is '{title}' by {artist} exactly {bpm} BPM or is it {bpm-4} to {bpm+4}? Return only the exact number."}
-                        ],
-                        temperature=0.0,
-                        max_tokens=5
-                    )
-                    verify_bpm = re.search(r'\d+', verify_response.choices[0].message.content.strip())
-                    if verify_bpm:
-                        bpm = int(verify_bpm.group())
-                
-                print(f"✓ BPM for '{title}': {bpm}")
-                return bpm
-        
-        print(f"⚠ BPM extraction failed for '{title}', got: '{bpm_text}'")
-    except Exception as e:
-        print(f"❌ BPM lookup failed for '{title}' by '{artist}': {e}")
+    # === COMMENTED OUT: OpenAI BPM lookup ===
+    # try:
+    #     response = client.chat.completions.create(
+    #         model="gpt-4o",  # Using gpt-4o for better accuracy
+    #         messages=[
+    #             {
+    #                 "role": "system", 
+    #                 "content": """You are a music database expert. You MUST provide the EXACT BPM from sources like Tunebat, SongBPM, or GetSongBPM.
+    # 
+    # CRITICAL: Return the precise BPM - NOT rounded to 100, 120, etc.
+    # 
+    # Examples of CORRECT responses:
+    # - "Blinding Lights" by The Weeknd → 171
+    # - "Levitating" by Dua Lipa → 103
+    # - "Peaches" by Justin Bieber → 90
+    # - "Bad Guy" by Billie Eilish → 135
+    # 
+    # Return ONLY the number. Nothing else."""
+    #             },
+    #             {
+    #                 "role": "user", 
+    #                 "content": f"BPM of '{title}' by {artist}"
+    #             }
+    #         ],
+    #         temperature=0.0,
+    #         max_tokens=5
+    #     )
+    #     bpm_text = response.choices[0].message.content.strip()
+    #     
+    #     # Extract just the number
+    #     bpm_match = re.search(r'\d+', bpm_text)
+    #     if bpm_match:
+    #         bpm = int(bpm_match.group())
+    #         if 60 <= bpm <= 220:
+    #             # Check if it's a suspicious round number - verify it
+    #             if bpm % 10 == 0 and bpm in [100, 110, 120, 130, 140, 150]:
+    #                 print(f"⚠ Got round number {bpm} for '{title}', verifying...")
+    #                 # Quick retry with more specific prompt
+    #                 verify_response = client.chat.completions.create(
+    #                     model="gpt-4o",
+    #                     messages=[
+    #                         {"role": "system", "content": "Return EXACT BPM from Tunebat.com or GetSongBPM.com. If it's truly 100 or 120, confirm. If it's close like 104 or 118, return that exact number."},
+    #                         {"role": "user", "content": f"Verify: Is '{title}' by {artist} exactly {bpm} BPM or is it {bpm-4} to {bpm+4}? Return only the exact number."}
+    #                     ],
+    #                     temperature=0.0,
+    #                     max_tokens=5
+    #                 )
+    #                 verify_bpm = re.search(r'\d+', verify_response.choices[0].message.content.strip())
+    #                 if verify_bpm:
+    #                     bpm = int(verify_bpm.group())
+    #             
+    #             print(f"✓ BPM for '{title}': {bpm}")
+    #             return bpm
+    #     
+    #     print(f"⚠ BPM extraction failed for '{title}', got: '{bpm_text}'")
+    # except Exception as e:
+    #     print(f"❌ BPM lookup failed for '{title}' by '{artist}': {e}")
     
-    # Fallback to librosa if OpenAI failed
+    # Use librosa beat tracking for BPM detection
     if audio_file and os.path.exists(audio_file):
-        print(f"  → Falling back to librosa beat tracking...")
-        librosa_bpm = estimate_bpm_with_librosa(audio_file)
-        if librosa_bpm:
-            return librosa_bpm
+        print(f"  → Using librosa beat tracking for BPM...")
+        librosa_result = estimate_bpm_with_librosa(audio_file)
+        if librosa_result and isinstance(librosa_result, dict):
+            return librosa_result.get("bpm", 120)
+        elif librosa_result:
+            return librosa_result
     
     # Final fallback to default
     print(f"  → Using default BPM: 120")
@@ -273,7 +285,8 @@ def process_bpm_lookup(input_json: str = "analyzed_setlist.json", output_json: s
                         "genre": cached.get("genre", "Unknown"),
                         "key": cached.get("key", "C"),
                         "key_semitone": cached.get("key_semitone", 0),
-                        "scale": cached.get("scale", "major")
+                        "scale": cached.get("scale", "major"),
+                        "energy": cached.get("energy", 0.5)  # Energy level for DJ mixing
                     })
                     continue
                 
@@ -281,7 +294,16 @@ def process_bpm_lookup(input_json: str = "analyzed_setlist.json", output_json: s
                 audio_path = os.path.join(SONGS_DIR, file) if file else None
                 
                 # Lookup metadata with fallback to librosa
-                bpm = refine_bpm(title, artist, audio_path) if client else (estimate_bpm_with_librosa(audio_path) if audio_path and os.path.exists(audio_path) else 120)
+                bpm_result = refine_bpm(title, artist, audio_path) if client else (estimate_bpm_with_librosa(audio_path) if audio_path and os.path.exists(audio_path) else 120)
+                
+                # Extract BPM and energy
+                if isinstance(bpm_result, dict):
+                    bpm = bpm_result.get("bpm", 120)
+                    energy = bpm_result.get("energy", 0.5)
+                else:
+                    bpm = bpm_result
+                    energy = 0.5  # Default energy if not calculated
+                
                 genre = get_genre(title, artist) if client else "Unknown"
                 key, scale = estimate_key(title, artist) if client else ("C", "major")
                 key_semitone = _key_to_semitone(key, scale)
@@ -294,7 +316,8 @@ def process_bpm_lookup(input_json: str = "analyzed_setlist.json", output_json: s
                     "genre": genre,
                     "key": f"{key}m" if scale == "minor" else key,
                     "key_semitone": key_semitone,
-                    "scale": scale
+                    "scale": scale,
+                    "energy": energy  # Add energy to metadata
                 }
                 
                 # Save to cache
