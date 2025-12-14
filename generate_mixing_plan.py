@@ -17,6 +17,40 @@ import librosa
 
 SONGS_DIR = "./songs"
 
+# ================= GENRE-SPECIFIC TRANSITION RULES =================
+GENRE_TRANSITION_RULES = {
+    "afrobeats": {
+        "preferred_type": "verse_end",
+        "avoid": ["mid_chorus"],
+        "energy_preference": "smooth"
+    },
+    "r&b": {
+        "preferred_type": "breakdown_start",
+        "avoid": ["mid_vocal_phrase"],
+        "energy_preference": "smooth"
+    },
+    "pop": {
+        "preferred_type": "chorus_end",
+        "avoid": [],
+        "energy_preference": "energetic"
+    },
+    "edm": {
+        "preferred_type": "pre_drop",
+        "avoid": ["mid_buildup"],
+        "energy_preference": "energetic"
+    },
+    "hip hop": {
+        "preferred_type": "verse_end",
+        "avoid": ["mid_hook"],
+        "energy_preference": "smooth"
+    },
+    "dancehall": {
+        "preferred_type": "chorus_end",
+        "avoid": [],
+        "energy_preference": "energetic"
+    }
+}
+
 # ================= CAMELOT WHEEL (HARMONIC MIXING) =================
 # Musical key compatibility for smooth DJ transitions
 CAMELOT_WHEEL = {
@@ -71,6 +105,130 @@ def calculate_key_compatibility(key1: str, key2: str) -> float:
         return 0.8
     
     return -1.0  # Key clash - will sound bad
+
+
+def score_transition_candidate(candidate, current_track, next_track):
+    """
+    Score a transition point candidate based on multiple factors.
+    Returns score 0-100.
+    """
+    score = 50.0  # Base score
+    
+    # Get track metadata
+    current_genre = current_track.get("genre", "").lower()
+    current_key = current_track.get("key", "")
+    current_bpm = current_track.get("bpm", 120)
+    
+    next_key = next_track.get("key", "")
+    next_bpm = next_track.get("bpm", 120)
+    
+    # Check both locations for structure data (backward compatibility)
+    next_structure = next_track.get("structure", next_track)
+    next_intro_vocals = next_structure.get("has_vocals_in_first_8s", True)
+    
+    # FACTOR 1: Genre-specific preference (±15 points)
+    genre_rules = GENRE_TRANSITION_RULES.get(current_genre, {})
+    preferred_type = genre_rules.get("preferred_type")
+    
+    if preferred_type and candidate["type"] == preferred_type:
+        score += 15
+    elif candidate["type"] in genre_rules.get("avoid", []):
+        score -= 15
+    
+    # FACTOR 2: Vocal overlap risk (±20 points)
+    has_vocals_after = candidate.get("has_vocals_after", True)
+    
+    if has_vocals_after and next_intro_vocals:
+        score -= 20  # Double vocals = muddy
+    elif not has_vocals_after and not next_intro_vocals:
+        score += 15  # Clean instrumental blend
+    elif not has_vocals_after:
+        score += 10  # Outgoing instrumental, any incoming works
+    
+    # FACTOR 3: Energy compatibility (±15 points)
+    candidate_energy = candidate.get("energy", "medium")
+    
+    # Check both locations for energy analysis
+    next_structure = next_track.get("structure", next_track)
+    next_energy = next_structure.get("energy_analysis", {}).get("buildups", [])
+    
+    # Prefer transitions that maintain or build energy
+    if candidate_energy == "high" and len(next_energy) > 0:
+        score += 10  # High to buildup = great flow
+    elif candidate_energy == "building":
+        score += 15  # Building energy is ideal for transitions
+    elif candidate_energy == "dropping":
+        score -= 5   # Dropping energy can work but less ideal
+    
+    # FACTOR 4: Key compatibility (±10 points)
+    key_score = calculate_key_compatibility(current_key, next_key)
+    if key_score >= 1.0:
+        score += 10
+    elif key_score < 0:
+        score -= 10
+    
+    # FACTOR 5: BPM difference (±5 points)
+    bpm_diff = abs(current_bpm - next_bpm)
+    if bpm_diff < 5:
+        score += 5   # Very close BPMs = easy mix
+    elif bpm_diff > 20:
+        score -= 5   # Large difference needs more work
+    
+    # FACTOR 6: Transition type bonus
+    type_scores = {
+        "breakdown_start": 10,  # Best for beat-sync
+        "pre_drop": 8,          # Great for energy
+        "verse_end": 5,         # Safe choice
+        "chorus_end": 3         # Can work but risky
+    }
+    score += type_scores.get(candidate["type"], 0)
+    
+    return max(0, min(100, score))  # Clamp 0-100
+
+
+def select_best_transition_point(current_track, next_track):
+    """
+    Select the best transition point from all candidates.
+    Uses intelligent scoring based on musical context.
+    """
+    # Check both locations: track["structure"] and track directly (for backward compatibility)
+    structure = current_track.get("structure", current_track)
+    candidates = structure.get("transition_candidates", [])
+    
+    if not candidates:
+        # Fallback to recommended or transition_point (check both locations)
+        recommended = structure.get("recommended_transition")
+        if recommended:
+            return recommended
+        
+        transition_pt = structure.get("transition_point")
+        if transition_pt:
+            return transition_pt
+        
+        # Final fallback
+        return 70.0
+    
+    # Score each candidate
+    scored_candidates = []
+    for candidate in candidates:
+        score = score_transition_candidate(candidate, current_track, next_track)
+        scored_candidates.append({
+            "time": candidate["time"],
+            "type": candidate["type"],
+            "score": score,
+            "reasoning": candidate.get("reasoning", "")
+        })
+    
+    # Sort by score (highest first)
+    scored_candidates.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Return best candidate
+    best = scored_candidates[0]
+    print(f"    → Selected: {best['time']:.1f}s ({best['type']}, score: {best['score']:.0f}/100)")
+    print(f"    → Reason: {best['reasoning'][:60]}..." if len(best['reasoning']) > 60 else f"    → Reason: {best['reasoning']}")
+    
+    return best["time"]
+
 
 def calculate_dynamic_overlap(from_track: dict, to_track: dict) -> float:
     """
@@ -199,10 +357,11 @@ def generate_mixing_plan(
                 bpm_change_point = None
                 comment = f"Start with {track['title']} (BPM {track.get('bpm', 'N/A')})"
             else:
-                # === PROFESSIONAL DJ TRANSITION CALCULATION ===
+                # === INTELLIGENT TRANSITION POINT SELECTION ===
+                print(f"  Analyzing transition: {last_track['title']} → {track['title']}")
                 
-                # Get track properties
-                from_transition_point = last_track.get("transition_point", 70.0)
+                # Use intelligent scoring to select best transition point
+                from_transition_point = select_best_transition_point(last_track, track)
                 to_intro_duration = track.get("intro_duration", 8.0)
                 to_has_early_vocals = track.get("has_vocals_in_first_8s", False)
                 

@@ -191,9 +191,231 @@ def apply_progressive_eq(audio: AudioSegment, filter_type: str = "lowpass"):
     return result
 
 
-# ================= BEAT ALIGNMENT =================
+# ================= ADVANCED BEAT ALIGNMENT SYSTEM =================
+def detect_beat_grid(audio_seg: AudioSegment, bpm=None):
+    """
+    Detect precise beat grid with downbeat detection using librosa.
+    Returns beat times in milliseconds and downbeat positions.
+    """
+    y = audio_segment_to_np(audio_seg)
+    sr = audio_seg.frame_rate
+    
+    # Use librosa's advanced beat tracking
+    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, units='frames')
+    beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+    
+    # Detect downbeats (first beat of each bar - every 4 beats typically)
+    # Use onset strength to find stronger beats
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    
+    # Downbeats are typically every 4 beats in 4/4 time
+    if len(beat_times) >= 4:
+        # Find downbeats by looking at onset strength at beat positions
+        beat_strengths = [onset_env[int(librosa.time_to_frames(bt, sr=sr))] for bt in beat_times]
+        
+        # Group into bars of 4 beats
+        downbeat_indices = []
+        for i in range(0, len(beat_times) - 3, 4):
+            # Find strongest beat in this group of 4
+            bar_beats = beat_strengths[i:i+4]
+            strongest_in_bar = i + np.argmax(bar_beats)
+            downbeat_indices.append(strongest_in_bar)
+        
+        downbeat_times = beat_times[downbeat_indices]
+    else:
+        downbeat_times = beat_times[::4] if len(beat_times) >= 4 else beat_times[:1]
+    
+    # Convert to milliseconds
+    beat_times_ms = beat_times * 1000
+    downbeat_times_ms = downbeat_times * 1000
+    
+    return beat_times_ms, downbeat_times_ms, tempo
+
+def align_beats_perfect(outgoing: AudioSegment, incoming: AudioSegment, 
+                        overlap_duration_ms: int, bpm_from: float, bpm_to: float):
+    """
+    Perfect beat-to-beat alignment during overlap.
+    
+    Process:
+    1. Detect beat grids in both tracks
+    2. Align first downbeat of incoming to outgoing's beat grid
+    3. Apply micro time-stretching per beat to maintain sync throughout overlap
+    
+    Returns: (aligned_incoming, shift_ms)
+    """
+    print("   🎯 Applying perfect beat alignment...")
+    
+    # Detect beat grids
+    try:
+        outgoing_beats, outgoing_downbeats, _ = detect_beat_grid(outgoing, bpm_from)
+        incoming_beats, incoming_downbeats, _ = detect_beat_grid(incoming, bpm_to)
+    except Exception as e:
+        print(f"   ⚠️  Beat detection failed: {e}, using basic alignment")
+        return incoming, 0
+    
+    if len(outgoing_downbeats) == 0 or len(incoming_downbeats) == 0:
+        print("   ⚠️  No downbeats detected, using basic alignment")
+        return incoming, 0
+    
+    # STEP 1: Align first downbeat
+    # Find the first downbeat in outgoing (should be near start of overlap section)
+    target_downbeat = outgoing_downbeats[0]
+    incoming_downbeat = incoming_downbeats[0]
+    
+    # Calculate shift needed to align downbeats
+    shift_ms = target_downbeat - incoming_downbeat
+    
+    print(f"   → Downbeat alignment: {shift_ms:.1f}ms shift")
+    
+    # Apply initial shift
+    if shift_ms > 0:
+        incoming = AudioSegment.silent(int(shift_ms)) + incoming
+        # Update beat positions
+        incoming_beats = incoming_beats + shift_ms
+        incoming_downbeats = incoming_downbeats + shift_ms
+    elif shift_ms < 0:
+        incoming = incoming[int(-shift_ms):]
+        # Update beat positions
+        incoming_beats = incoming_beats + shift_ms
+        incoming_downbeats = incoming_downbeats + shift_ms
+    
+    # STEP 2: Beat grid warping for continuous sync
+    # Only warp beats within the overlap duration
+    overlap_beats_out = outgoing_beats[outgoing_beats < overlap_duration_ms]
+    overlap_beats_in = incoming_beats[incoming_beats < overlap_duration_ms]
+    
+    if len(overlap_beats_out) < 2 or len(overlap_beats_in) < 2:
+        print(f"   → Basic alignment applied (shift: {shift_ms:.1f}ms)")
+        return incoming, shift_ms
+    
+    # Match the number of beats to process
+    num_beats = min(len(overlap_beats_out), len(overlap_beats_in))
+    
+    # Calculate beat-by-beat drift and apply micro corrections
+    total_corrections = 0
+    corrected_audio = incoming
+    
+    for i in range(1, num_beats):
+        target_beat_time = overlap_beats_out[i]
+        actual_beat_time = overlap_beats_in[i]
+        drift_ms = actual_beat_time - target_beat_time
+        
+        # Apply micro time-stretch if drift exceeds threshold (10ms)
+        if abs(drift_ms) > 10:
+            # Calculate the segment to correct (from previous beat to this beat)
+            segment_start = int(overlap_beats_in[i-1])
+            segment_end = int(overlap_beats_in[i])
+            
+            if segment_end > segment_start and segment_end <= len(corrected_audio):
+                segment = corrected_audio[segment_start:segment_end]
+                
+                # Calculate correction ratio
+                target_duration = overlap_beats_out[i] - overlap_beats_out[i-1]
+                actual_duration = segment_end - segment_start
+                correction_ratio = target_duration / actual_duration
+                
+                # Limit correction to prevent artifacts (±5%)
+                correction_ratio = np.clip(correction_ratio, 0.95, 1.05)
+                
+                # Apply micro time-stretch
+                if abs(correction_ratio - 1.0) > 0.01:
+                    try:
+                        stretched_segment = time_stretch_audio(segment, correction_ratio)
+                        
+                        # Reconstruct audio with corrected segment
+                        before = corrected_audio[:segment_start]
+                        after = corrected_audio[segment_end:]
+                        corrected_audio = before + stretched_segment + after
+                        
+                        total_corrections += 1
+                    except:
+                        pass  # Skip if stretch fails
+    
+    if total_corrections > 0:
+        print(f"   → Beat grid warping: {total_corrections} micro-corrections applied")
+    else:
+        print(f"   → Beats already aligned (drift < 10ms)")
+    
+    return corrected_audio, shift_ms
+
+def apply_gradual_tempo_sync(outgoing_audio: AudioSegment, overlap_duration_ms: int, 
+                             stretch_factor: float):
+    """
+    Gradually adjust tempo during overlap only - not entire song.
+    This mimics how Pioneer CDJs and Traktor handle tempo sync.
+    
+    Process:
+    1. Keep most of outgoing track at original tempo
+    2. Gradually ramp tempo in the overlap section only
+    3. Smooth transition from 1.0x to target stretch_factor
+    
+    Args:
+        outgoing_audio: The outgoing track audio
+        overlap_duration_ms: Duration of overlap in milliseconds
+        stretch_factor: Target tempo multiplier (e.g., 1.05 = 5% faster)
+    
+    Returns:
+        AudioSegment with gradual tempo adjustment
+    """
+    if abs(stretch_factor - 1.0) < 0.01:
+        return outgoing_audio  # No sync needed
+    
+    print(f"   🎛️  Applying gradual tempo sync: 1.00x → {stretch_factor:.3f}x over {overlap_duration_ms/1000:.1f}s")
+    
+    # Calculate ramp start point (2x overlap duration before end for smooth ramp)
+    ramp_duration_ms = min(overlap_duration_ms * 2, 16000)  # Max 16s ramp
+    ramp_start = len(outgoing_audio) - ramp_duration_ms
+    
+    if ramp_start < 0:
+        # Audio too short, stretch entire thing
+        return time_stretch_audio(outgoing_audio, stretch_factor)
+    
+    # Split audio: stable section + ramp section
+    stable_section = outgoing_audio[:ramp_start]
+    ramp_section = outgoing_audio[ramp_start:]
+    
+    # Divide ramp section into small chunks for smooth gradual change
+    num_chunks = 32  # 32 chunks = very smooth transition
+    chunk_duration_ms = len(ramp_section) // num_chunks
+    
+    if chunk_duration_ms < 100:
+        # Chunks too small, reduce number
+        num_chunks = max(8, len(ramp_section) // 100)
+        chunk_duration_ms = len(ramp_section) // num_chunks
+    
+    ramped_chunks = []
+    total_stretch_applied = 0
+    
+    for i in range(num_chunks):
+        chunk_start = i * chunk_duration_ms
+        chunk_end = (i + 1) * chunk_duration_ms if i < num_chunks - 1 else len(ramp_section)
+        chunk = ramp_section[chunk_start:chunk_end]
+        
+        # Calculate progressive stretch factor (linear interpolation)
+        progress = i / (num_chunks - 1)  # 0.0 → 1.0
+        current_stretch = 1.0 + (stretch_factor - 1.0) * progress
+        
+        # Apply micro-stretch to this chunk
+        try:
+            stretched_chunk = time_stretch_audio(chunk, current_stretch)
+            ramped_chunks.append(stretched_chunk)
+            total_stretch_applied += abs(current_stretch - 1.0)
+        except Exception as e:
+            # If stretch fails, use original chunk
+            ramped_chunks.append(chunk)
+    
+    # Recombine: stable section + gradually ramped section
+    result = stable_section
+    for chunk in ramped_chunks:
+        result += chunk
+    
+    avg_stretch = total_stretch_applied / num_chunks if num_chunks > 0 else 0
+    print(f"   → Gradual ramp: {num_chunks} micro-adjustments (avg {avg_stretch:.4f}x per segment)")
+    
+    return result
+
 def detect_beats(audio_seg: AudioSegment, sr=44100, min_interval_ms=200):
-    """Detect beat positions in audio segment using energy peaks."""
+    """Detect beat positions in audio segment using energy peaks (legacy method)."""
     y = np.array(audio_seg.get_array_of_samples()).astype(np.float32)
     if audio_seg.channels == 2:
         y = y.reshape((-1,2)).mean(axis=1)
@@ -217,7 +439,7 @@ def detect_beats(audio_seg: AudioSegment, sr=44100, min_interval_ms=200):
     return beat_times_ms
 
 def find_best_lag(outgoing: AudioSegment, incoming: AudioSegment):
-    """Find optimal lag to align beats between two audio segments."""
+    """Find optimal lag to align beats between two audio segments (legacy method)."""
     outgoing_beats = detect_beats(outgoing)
     incoming_beats = detect_beats(incoming)
     
@@ -421,39 +643,56 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
         print(f"   Incoming starts at: {incoming_start_in_mix/1000:.1f}s in mix")
         print(f"   Transition point: {transition_point_in_mix/1000:.1f}s in mix")
         
-        # STEP 1: BPM change on previous track 8 seconds before transition
-        # Apply time-stretching to the entire previous track if needed
+        # STEP 1: GRADUAL BPM SYNC - Apply smooth tempo transition during overlap only
+        # This is how professional DJ equipment (Pioneer CDJs, Traktor) handles tempo sync
         if previous_track_audio and bpm_from > 0 and bpm_to > 0:
             stretch_factor = safe_float(bpm_to/bpm_from, 1.0)
             stretch_factor = np.clip(stretch_factor, 0.90, 1.10)  # Allow wider range for DJ mixing
             if abs(stretch_factor - 1.0) > 0.01:
-                print(f"   BPM change: {bpm_from:.1f} → {bpm_to:.1f} (stretch: {stretch_factor:.3f}x)")
+                print(f"   BPM sync: {bpm_from:.1f} → {bpm_to:.1f} (stretch: {stretch_factor:.3f}x)")
                 
-                # Get the part that needs BPM change (from bpm_change_point to end)
+                # Apply gradual tempo sync to the section that will overlap
+                # This creates a smooth, inaudible tempo transition
                 bpm_change_offset_in_track = ms(bpm_change_point_sec) - previous_track_start_in_mix
                 if bpm_change_offset_in_track > 0:
-                    # Keep beginning unchanged, stretch the rest
+                    # Keep beginning unchanged
                     before_bpm_change = mix[:bpm_change_point_in_mix]
                     after_bpm_change = mix[bpm_change_point_in_mix:]
-                    stretched_section = time_stretch_audio(after_bpm_change, stretch_factor)
-                    mix = before_bpm_change + stretched_section
+                    
+                    # Apply gradual tempo sync (not instant stretch)
+                    synced_section = apply_gradual_tempo_sync(
+                        after_bpm_change, 
+                        overlap_duration_ms, 
+                        stretch_factor
+                    )
+                    mix = before_bpm_change + synced_section
         
-        # STEP 2: Beat alignment for incoming track
+        # STEP 2: PERFECT BEAT-GRID ALIGNMENT for incoming track
         # Get a section from previous track at transition point for beat matching
         if previous_track_audio:
             match_section_start = max(0, transition_point_ms - 5000)
-            match_section = previous_track_audio[match_section_start:min(transition_point_ms + 5000, len(previous_track_audio))]
-            incoming_start_section = to_audio[:min(10000, len(to_audio))]
+            match_section_end = min(transition_point_ms + overlap_duration_ms + 5000, len(previous_track_audio))
+            match_section = previous_track_audio[match_section_start:match_section_end]
             
-            lag_sec = find_best_lag(match_section, incoming_start_section)
-            lag_ms = ms(lag_sec)
+            # Get incoming section for alignment (overlap duration + buffer)
+            incoming_alignment_section = to_audio[:min(overlap_duration_ms + 10000, len(to_audio))]
             
-            if abs(lag_ms) > 50:
-                print(f"   Beat alignment: {lag_ms}ms adjustment")
-                if lag_ms > 0:
-                    to_audio = AudioSegment.silent(lag_ms) + to_audio
-                elif lag_ms < 0:
-                    to_audio = to_audio[-lag_ms:]
+            # Apply perfect beat-to-beat alignment
+            aligned_incoming, shift_ms = align_beats_perfect(
+                match_section, 
+                incoming_alignment_section, 
+                overlap_duration_ms, 
+                bpm_from, 
+                bpm_to
+            )
+            
+            # Update the full incoming track with aligned version
+            if len(aligned_incoming) > 0:
+                remainder = to_audio[len(incoming_alignment_section):]
+                to_audio = aligned_incoming + remainder
+            
+            if abs(shift_ms) > 50:
+                print(f"   ✅ Perfect beat alignment: {shift_ms:.1f}ms initial shift + grid warping")
         
         # STEP 3: Overlay incoming track starting at calculated position
         # Pad incoming to start at the right position in the mix

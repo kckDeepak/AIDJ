@@ -13,6 +13,7 @@ SPEED OPTIMIZATIONS:
 import os
 import json
 import numpy as np
+import scipy.signal
 from dotenv import load_dotenv
 
 try:
@@ -119,6 +120,73 @@ def extract_beat_times_fast(audio_path, max_duration=90):
         return np.array([]), 120.0, np.array([])
 
 
+def analyze_energy_curve(audio_path, max_duration=120):
+    """
+    Analyze energy curve to detect buildups, drops, and transitions.
+    Returns energy characteristics for intelligent transition point selection.
+    """
+    if librosa is None:
+        return {"has_buildup": False, "has_drop": False, "buildups": [], "drops": []}
+    
+    try:
+        y, sr = librosa.load(audio_path, sr=22050, duration=max_duration)
+        
+        # Calculate RMS energy in 2-second windows
+        hop_length = sr * 2  # 2-second windows
+        rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
+        
+        # Smooth energy curve
+        from scipy.signal import savgol_filter
+        if len(rms) > 5:
+            rms_smooth = savgol_filter(rms, min(11, len(rms) if len(rms) % 2 == 1 else len(rms) - 1), 3)
+        else:
+            rms_smooth = rms
+        
+        # Find energy changes (first derivative)
+        energy_diff = np.diff(rms_smooth)
+        
+        # Detect buildups (sustained energy increases)
+        buildups = []
+        for i in range(len(energy_diff) - 3):
+            # 3+ consecutive increases = buildup
+            if all(energy_diff[i:i+3] > 0.005):
+                time = i * 2  # Convert to seconds
+                if 45 <= time <= 115:
+                    buildups.append({
+                        "time": time,
+                        "peak_time": (i + 3) * 2,
+                        "intensity": float(energy_diff[i:i+3].sum())
+                    })
+        
+        # Detect drops (sudden energy decreases)
+        drops = []
+        for i in range(len(energy_diff)):
+            if energy_diff[i] < -0.03:  # Significant drop
+                time = i * 2
+                if 45 <= time <= 115:
+                    drops.append({
+                        "time": time,
+                        "depth": float(abs(energy_diff[i]))
+                    })
+        
+        # Calculate energy at key points
+        def get_energy_at_time(target_time):
+            idx = min(int(target_time / 2), len(rms_smooth) - 1)
+            return float(rms_smooth[idx])
+        
+        return {
+            "has_buildup": len(buildups) > 0,
+            "has_drop": len(drops) > 0,
+            "buildups": buildups,
+            "drops": drops,
+            "energy_curve": [float(x) for x in rms_smooth]
+            # Removed "get_energy_at" - it's a function, not JSON serializable
+        }
+    except Exception as e:
+        print(f"  Energy analysis failed: {e}")
+        return {"has_buildup": False, "has_drop": False, "buildups": [], "drops": []}
+
+
 def snap_to_phrase_boundary(target_time, phrase_boundaries, direction="nearest"):
     """
     Snap a target time to the nearest musical phrase boundary.
@@ -180,7 +248,7 @@ def ask_gpt4o_for_transition_point_fast(segments, beats_str, title, artist, dura
     
     lyrics_text = "\n".join(lyrics_formatted)
     
-    prompt = f"""You are a professional DJ. Analyze this song for DJ mixing.
+    prompt = f"""You are a professional DJ. Find the 3 BEST transition points for mixing out of this song.
 
 Song: "{title}" by {artist}
 Duration: {duration:.0f}s
@@ -190,25 +258,41 @@ Lyrics with segment timestamps:
 
 Beat timestamps (first 100 beats): [{beats_str}]
 
-CRITICAL RULES:
-1. Check if there are vocals/lyrics in the FIRST 8 SECONDS
-2. If vocals exist in first 8s:
-   - Transition point = END OF A LYRIC LINE (where singer pauses/breathes)
-   - This prevents vocal overlap when next song starts
-3. If NO vocals in first 8s:
-   - Transition point = 8 seconds BEFORE a line end
-   - This allows incoming instrumental intro to blend
-4. Transition point should be between 50-120 seconds
-5. Intro duration = time before main vocals start (0-20s range)
-6. Align to beat timestamps for smooth mixing
+FIND 3 TRANSITION CANDIDATES between 50-120 seconds:
+
+TRANSITION TYPES:
+1. "verse_end" - End of verse (vocals pause, natural break)
+2. "chorus_end" - End of chorus (high energy exit)
+3. "breakdown_start" - Start of instrumental/breakdown (no vocals, best for beat-sync)
+4. "pre_drop" - Just before a drop/climax (energy building)
+
+For EACH candidate:
+- Exact timestamp (align to beat)
+- Type (verse_end/chorus_end/breakdown_start/pre_drop)
+- Are there vocals in the 8 seconds AFTER this point?
+- Energy level (low/medium/high/building/dropping)
+- Why this is a good transition point
+
+ALSO PROVIDE:
+- has_vocals_in_first_8s: Are there vocals in first 8 seconds?
+- intro_duration_sec: Time before main vocals start (0-20s)
+- recommended_transition: Which of the 3 candidates is best?
 
 Return JSON:
 {{
   "has_vocals_in_first_8s": <boolean>,
-  "transition_point_sec": <float 50-120>,
   "intro_duration_sec": <float 0-20>,
-  "transition_is_line_end": <boolean>,
-  "reasoning": "<brief explanation>"
+  "transition_candidates": [
+    {{
+      "time": <float 50-120>,
+      "type": "verse_end|chorus_end|breakdown_start|pre_drop",
+      "has_vocals_after": <boolean>,
+      "energy": "low|medium|high|building|dropping",
+      "reasoning": "<why good transition>"
+    }},
+    ... (2 more)
+  ],
+  "recommended_transition": <float - best candidate time>
 }}"""
     
     client_local = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -223,6 +307,22 @@ Return JSON:
     # Add Python-detected early vocals as backup
     if "has_vocals_in_first_8s" not in result:
         result["has_vocals_in_first_8s"] = has_early_vocals
+    
+    # Ensure we have transition candidates
+    if "transition_candidates" not in result:
+        # Fallback: create single candidate from old format
+        result["transition_candidates"] = [{
+            "time": result.get("transition_point_sec", 70.0),
+            "type": "verse_end",
+            "has_vocals_after": result.get("has_vocals_in_first_8s", False),
+            "energy": "medium",
+            "reasoning": "Fallback transition point"
+        }]
+        result["recommended_transition"] = result.get("transition_point_sec", 70.0)
+    
+    # Maintain backward compatibility
+    result["transition_point"] = result.get("recommended_transition", 70.0)
+    result["intro_duration"] = result.get("intro_duration_sec", 8.0)
     
     return result
 
@@ -264,6 +364,12 @@ def analyze_structure_fast(title, artist, filename, bpm, SONGS_DIR="./songs"):
         
         # Step 3: Fast GPT analysis (gpt-4o-mini, segment-level only)
         result = ask_gpt4o_for_transition_point_fast(segments, beats_str, title, artist, duration)
+        
+        # Step 3.5: Add energy curve analysis
+        print("  Analyzing energy curve...")
+        energy_data = analyze_energy_curve(file_path, max_duration=120)
+        result["energy_analysis"] = energy_data
+        
         transition_point = float(result.get("transition_point_sec", 70.0))
         intro_duration = float(result.get("intro_duration_sec", 8.0))
         has_vocals_in_first_8s = result.get("has_vocals_in_first_8s", False)
@@ -293,22 +399,17 @@ def analyze_structure_fast(title, artist, filename, bpm, SONGS_DIR="./songs"):
         print(f"  ✓ Transition: {transition_point:.1f}s (phrase-aligned), Intro: {intro_duration:.1f}s")
         print(f"    Vocals in first 8s: {has_vocals_in_first_8s}, Line end: {transition_is_line_end}")
         
+        # Prepare complete structure data with all new fields
         structure_data = {
             "has_vocals": has_vocals, 
             "transition_point": transition_point,
             "intro_duration": intro_duration,
             "has_vocals_in_first_8s": has_vocals_in_first_8s,
-            "transition_is_line_end": transition_is_line_end
-        }
-        transition_point = float(np.clip(transition_point, 50.0, min(120.0, duration - 10.0)))
-        intro_duration = float(np.clip(intro_duration, 0.0, 20.0))
-        
-        print(f"  ✓ Transition: {transition_point:.1f}s, Intro: {intro_duration:.1f}s")
-        
-        structure_data = {
-            "has_vocals": has_vocals, 
-            "transition_point": transition_point,
-            "intro_duration": intro_duration
+            "transition_is_line_end": transition_is_line_end,
+            # NEW: Include all transition candidates and energy analysis
+            "transition_candidates": result.get("transition_candidates", []),
+            "recommended_transition": result.get("recommended_transition", transition_point),
+            "energy_analysis": energy_data
         }
         
         # Save to cache

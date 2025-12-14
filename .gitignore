@@ -3,8 +3,8 @@ myenv
 .cache
 __pycache__
 songs/
+extra/
 output/
-test_files/
 notes/
 # mix.mp3
 # analyzed_setlist.json
