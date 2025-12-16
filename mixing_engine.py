@@ -19,6 +19,19 @@ import librosa
 import scipy.signal
 from scipy.signal import butter, sosfilt
 
+# Import waveform visualization module
+try:
+    from waveform_visualizer import (
+        plot_waveform_alignment,
+        plot_beat_alignment,
+        plot_phase_cancellation_check,
+        plot_mix_overview
+    )
+    VISUALIZATION_ENABLED = True
+except ImportError as e:
+    print(f"Warning: Waveform visualization disabled - {e}")
+    VISUALIZATION_ENABLED = False
+
 SONGS_DIR = "./songs"
 
 # ================= GENRE-SPECIFIC DJ MIXING RULES =================
@@ -191,6 +204,128 @@ def apply_progressive_eq(audio: AudioSegment, filter_type: str = "lowpass"):
     return result
 
 
+# ================= WAVEFORM PHASE ALIGNMENT (PROFESSIONAL DJ TECHNIQUE) =================
+def align_waveform_phase(outgoing: AudioSegment, incoming: AudioSegment, max_shift_ms=50):
+    """
+    Align waveforms at the sample level using cross-correlation.
+    This prevents phase cancellation when overlaying tracks.
+    
+    Professional DJs use this technique to ensure waveforms constructively interfere
+    rather than cancel each other out (which causes volume drops/hollow sound).
+    
+    Process:
+    1. Convert both audio segments to numpy arrays
+    2. Use cross-correlation to find optimal phase alignment
+    3. Shift incoming waveform by optimal offset
+    4. Check for phase coherence after alignment
+    
+    Returns: (phase_aligned_incoming, shift_samples, coherence_score)
+    """
+    # Convert to numpy arrays for processing
+    y_out = audio_segment_to_np(outgoing)
+    y_in = audio_segment_to_np(incoming)
+    sr = outgoing.frame_rate
+    
+    # Limit analysis to first few seconds for speed
+    analysis_samples = min(sr * 5, len(y_out), len(y_in))  # 5 seconds max
+    y_out_segment = y_out[:analysis_samples]
+    y_in_segment = y_in[:analysis_samples]
+    
+    # Calculate max shift in samples
+    max_shift_samples = int(sr * max_shift_ms / 1000)
+    
+    # Use cross-correlation to find optimal alignment
+    # This finds where the two waveforms match best
+    correlation = np.correlate(y_out_segment, y_in_segment, mode='same')
+    
+    # Find the lag that gives maximum correlation
+    center = len(correlation) // 2
+    search_range = min(max_shift_samples, center)
+    search_start = center - search_range
+    search_end = center + search_range
+    
+    search_correlation = correlation[search_start:search_end]
+    optimal_lag_idx = np.argmax(np.abs(search_correlation))
+    optimal_lag_samples = optimal_lag_idx - search_range
+    
+    # Apply shift to incoming audio
+    if optimal_lag_samples > 0:
+        # Add silence to beginning
+        silence_duration_ms = int(optimal_lag_samples * 1000 / sr)
+        aligned_incoming = AudioSegment.silent(silence_duration_ms) + incoming
+    elif optimal_lag_samples < 0:
+        # Trim from beginning
+        trim_duration_ms = int(abs(optimal_lag_samples) * 1000 / sr)
+        aligned_incoming = incoming[trim_duration_ms:]
+    else:
+        aligned_incoming = incoming
+    
+    # Calculate phase coherence score (0-1, higher is better)
+    # This measures how well the waveforms align
+    y_in_aligned = audio_segment_to_np(aligned_incoming)[:analysis_samples]
+    if len(y_in_aligned) >= analysis_samples:
+        # Normalize both signals for comparison
+        y_out_norm = y_out_segment / (np.max(np.abs(y_out_segment)) + 1e-8)
+        y_in_norm = y_in_aligned / (np.max(np.abs(y_in_aligned)) + 1e-8)
+        
+        # Calculate correlation coefficient (coherence)
+        coherence = np.abs(np.corrcoef(y_out_norm, y_in_norm)[0, 1])
+    else:
+        coherence = 0.0
+    
+    shift_ms = optimal_lag_samples * 1000 / sr
+    
+    return aligned_incoming, shift_ms, coherence
+
+def detect_zero_crossings(audio_seg: AudioSegment, window_ms=100):
+    """
+    Detect zero-crossing points in audio for clean transition points.
+    Zero crossings are where the waveform crosses the zero amplitude line.
+    Mixing at zero crossings prevents clicks and pops.
+    
+    Returns: Array of zero-crossing positions in milliseconds
+    """
+    y = audio_segment_to_np(audio_seg)
+    sr = audio_seg.frame_rate
+    
+    # Find where signal crosses zero
+    zero_crossings = np.where(np.diff(np.sign(y)))[0]
+    
+    # Convert to milliseconds
+    zero_crossing_times_ms = (zero_crossings / sr) * 1000
+    
+    return zero_crossing_times_ms
+
+def check_phase_cancellation(outgoing: AudioSegment, incoming: AudioSegment, overlap_start_ms=0):
+    """
+    Check if overlaying two audio segments will cause phase cancellation.
+    Phase cancellation occurs when two waveforms are out of phase and cancel each other.
+    
+    Returns: (has_cancellation: bool, cancellation_severity: float)
+    """
+    # Extract overlap sections
+    overlap_duration_ms = min(len(outgoing) - overlap_start_ms, len(incoming), 5000)  # Max 5s check
+    if overlap_duration_ms <= 0:
+        return False, 0.0
+    
+    y_out = audio_segment_to_np(outgoing[overlap_start_ms:overlap_start_ms + overlap_duration_ms])
+    y_in = audio_segment_to_np(incoming[:overlap_duration_ms])
+    
+    # Normalize for fair comparison
+    y_out = y_out / (np.max(np.abs(y_out)) + 1e-8)
+    y_in = y_in / (np.max(np.abs(y_in)) + 1e-8)
+    
+    # Check if signals are approximately opposite (phase cancellation)
+    # Negative correlation indicates phase opposition
+    min_len = min(len(y_out), len(y_in))
+    correlation = np.corrcoef(y_out[:min_len], y_in[:min_len])[0, 1]
+    
+    # Cancellation severity: -1 = complete opposition, 0 = no correlation, 1 = perfect alignment
+    has_cancellation = correlation < -0.3  # Threshold for significant cancellation
+    severity = abs(min(correlation, 0))  # Only negative correlations matter
+    
+    return has_cancellation, severity
+
 # ================= ADVANCED BEAT ALIGNMENT SYSTEM =================
 def detect_beat_grid(audio_seg: AudioSegment, bpm=None):
     """
@@ -232,7 +367,8 @@ def detect_beat_grid(audio_seg: AudioSegment, bpm=None):
     return beat_times_ms, downbeat_times_ms, tempo
 
 def align_beats_perfect(outgoing: AudioSegment, incoming: AudioSegment, 
-                        overlap_duration_ms: int, bpm_from: float, bpm_to: float):
+                        overlap_duration_ms: int, bpm_from: float, bpm_to: float,
+                        track_names: tuple = ("Track A", "Track B")):
     """
     Perfect beat-to-beat alignment during overlap.
     
@@ -240,6 +376,15 @@ def align_beats_perfect(outgoing: AudioSegment, incoming: AudioSegment,
     1. Detect beat grids in both tracks
     2. Align first downbeat of incoming to outgoing's beat grid
     3. Apply micro time-stretching per beat to maintain sync throughout overlap
+    4. Generate waveform visualizations for DJ analysis
+    
+    Args:
+        outgoing: Outgoing track audio
+        incoming: Incoming track audio
+        overlap_duration_ms: Duration of overlap
+        bpm_from: BPM of outgoing track
+        bpm_to: BPM of incoming track
+        track_names: Tuple of (outgoing_name, incoming_name) for visualization
     
     Returns: (aligned_incoming, shift_ms)
     """
@@ -256,6 +401,16 @@ def align_beats_perfect(outgoing: AudioSegment, incoming: AudioSegment,
     if len(outgoing_downbeats) == 0 or len(incoming_downbeats) == 0:
         print("   ⚠️  No downbeats detected, using basic alignment")
         return incoming, 0
+    
+    # === VISUALIZATION: Beat Grid Alignment ===
+    if VISUALIZATION_ENABLED and len(outgoing_beats) > 0 and len(incoming_beats) > 0:
+        try:
+            plot_beat_alignment(outgoing, incoming, 
+                              outgoing_beats, incoming_beats,
+                              outgoing_downbeats, incoming_downbeats,
+                              track_names)
+        except Exception as e:
+            print(f"   ⚠️  Beat visualization failed: {e}")
     
     # STEP 1: Align first downbeat
     # Find the first downbeat in outgoing (should be near start of overlap section)
@@ -335,6 +490,73 @@ def align_beats_perfect(outgoing: AudioSegment, incoming: AudioSegment,
         print(f"   → Beat grid warping: {total_corrections} micro-corrections applied")
     else:
         print(f"   → Beats already aligned (drift < 10ms)")
+    
+    # STEP 3: WAVEFORM PHASE ALIGNMENT (Professional DJ technique)
+    # After beat alignment, align waveforms at sample level to prevent phase cancellation
+    print(f"   🌊 Applying waveform phase alignment...")
+    
+    # Use a section from both tracks for phase analysis
+    phase_analysis_duration = min(overlap_duration_ms, 3000, len(outgoing), len(corrected_audio))
+    outgoing_phase_section = outgoing[:phase_analysis_duration]
+    incoming_phase_section = corrected_audio[:phase_analysis_duration]
+    
+    # Apply phase alignment
+    phase_aligned, phase_shift_ms, coherence = align_waveform_phase(
+        outgoing_phase_section,
+        corrected_audio,
+        max_shift_ms=20  # Max 20ms micro-adjustment for phase
+    )
+    
+    # Check for phase cancellation
+    has_cancellation, severity = check_phase_cancellation(
+        outgoing,
+        phase_aligned,
+        overlap_start_ms=0
+    )
+    
+    if has_cancellation:
+        print(f"   ⚠️  Phase cancellation detected (severity: {severity:.2f})")
+        print(f"   → Inverting phase to fix cancellation...")
+        # Invert the phase of incoming track to fix cancellation
+        y_inverted = audio_segment_to_np(phase_aligned) * -1
+        phase_aligned = np_to_audio_segment(y_inverted, sr=phase_aligned.frame_rate)
+        # Re-check
+        has_cancellation, severity = check_phase_cancellation(outgoing, phase_aligned)
+        if not has_cancellation:
+            print(f"   ✅ Phase cancellation fixed!")
+    
+    print(f"   → Phase alignment: {phase_shift_ms:.2f}ms shift, coherence: {coherence:.3f}")
+    
+    # === VISUALIZATION: Waveform Phase Alignment ===
+    if VISUALIZATION_ENABLED:
+        try:
+            plot_waveform_alignment(
+                outgoing_phase_section, 
+                phase_aligned[:phase_analysis_duration] if len(phase_aligned) >= phase_analysis_duration else phase_aligned,
+                phase_analysis_duration, 
+                track_names,
+                phase_shift_ms, 
+                coherence
+            )
+        except Exception as e:
+            print(f"   ⚠️  Waveform visualization failed: {e}")
+    
+    # === VISUALIZATION: Phase Cancellation Check ===
+    if VISUALIZATION_ENABLED and (has_cancellation or severity > 0.2):
+        try:
+            plot_phase_cancellation_check(
+                outgoing,
+                phase_aligned,
+                has_cancellation, 
+                severity,
+                track_names
+            )
+        except Exception as e:
+            print(f"   ⚠️  Phase check visualization failed: {e}")
+    
+    # Use phase-aligned version if coherence improved significantly
+    if abs(phase_shift_ms) > 1.0:  # Only apply if shift is meaningful
+        corrected_audio = phase_aligned
     
     return corrected_audio, shift_ms
 
@@ -573,6 +795,9 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
     mix = AudioSegment.empty()
     previous_track_audio = None
     previous_track_start_in_mix = 0
+    
+    # Track mix overview data for visualization
+    mix_overview_data = []
 
     for idx, entry in enumerate(plan):
         to_title = entry.get("to_track")
@@ -596,6 +821,14 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
             mix = to_audio.fade_in(ms(2))
             previous_track_audio = to_audio
             previous_track_start_in_mix = 0
+            
+            # Add to mix overview
+            mix_overview_data.append({
+                'name': to_title,
+                'start_ms': 0,
+                'duration_ms': len(to_audio),
+                'bpm': bpm_to
+            })
             continue
 
         # Get transition parameters from mixing plan
@@ -643,29 +876,36 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
         print(f"   Incoming starts at: {incoming_start_in_mix/1000:.1f}s in mix")
         print(f"   Transition point: {transition_point_in_mix/1000:.1f}s in mix")
         
-        # STEP 1: GRADUAL BPM SYNC - Apply smooth tempo transition during overlap only
-        # This is how professional DJ equipment (Pioneer CDJs, Traktor) handles tempo sync
+        # STEP 1: GRADUAL BPM SYNC - Apply smooth tempo transition BEFORE overlap starts
+        # The outgoing track must be fully synced to incoming BPM by the time overlap begins
+        # This ensures both tracks are at the same tempo during the overlap for perfect alignment
         if previous_track_audio and bpm_from > 0 and bpm_to > 0:
             stretch_factor = safe_float(bpm_to/bpm_from, 1.0)
             stretch_factor = np.clip(stretch_factor, 0.90, 1.10)  # Allow wider range for DJ mixing
             if abs(stretch_factor - 1.0) > 0.01:
                 print(f"   BPM sync: {bpm_from:.1f} → {bpm_to:.1f} (stretch: {stretch_factor:.3f}x)")
+                print(f"   → Sync completes BEFORE overlap (at {transition_point_in_mix/1000:.1f}s)")
                 
-                # Apply gradual tempo sync to the section that will overlap
-                # This creates a smooth, inaudible tempo transition
-                bpm_change_offset_in_track = ms(bpm_change_point_sec) - previous_track_start_in_mix
-                if bpm_change_offset_in_track > 0:
-                    # Keep beginning unchanged
-                    before_bpm_change = mix[:bpm_change_point_in_mix]
-                    after_bpm_change = mix[bpm_change_point_in_mix:]
-                    
-                    # Apply gradual tempo sync (not instant stretch)
-                    synced_section = apply_gradual_tempo_sync(
-                        after_bpm_change, 
-                        overlap_duration_ms, 
-                        stretch_factor
-                    )
-                    mix = before_bpm_change + synced_section
+                # Calculate tempo ramp duration (typically 8-16 seconds before transition)
+                ramp_duration_ms = min(overlap_duration_ms * 2, 16000)  # Max 16s ramp
+                ramp_start_in_mix = max(0, transition_point_in_mix - ramp_duration_ms)
+                
+                # Split mix into: before ramp, ramp section, overlap section
+                before_ramp = mix[:ramp_start_in_mix]
+                ramp_section = mix[ramp_start_in_mix:transition_point_in_mix]
+                overlap_section = mix[transition_point_in_mix:]
+                
+                # Apply gradual tempo sync to ramp section (completes at transition point)
+                synced_ramp = apply_gradual_tempo_sync(
+                    ramp_section, 
+                    ramp_duration_ms, 
+                    stretch_factor
+                )
+                
+                # Reconstruct mix: before ramp + synced ramp + overlap (both now at same BPM)
+                mix = before_ramp + synced_ramp + overlap_section
+                
+                print(f"   → Tempo ramp: {ramp_start_in_mix/1000:.1f}s to {transition_point_in_mix/1000:.1f}s ({ramp_duration_ms/1000:.1f}s)")
         
         # STEP 2: PERFECT BEAT-GRID ALIGNMENT for incoming track
         # Get a section from previous track at transition point for beat matching
@@ -677,13 +917,15 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
             # Get incoming section for alignment (overlap duration + buffer)
             incoming_alignment_section = to_audio[:min(overlap_duration_ms + 10000, len(to_audio))]
             
-            # Apply perfect beat-to-beat alignment
+            # Apply perfect beat-to-beat alignment (with visualization)
+            track_names = (from_title, to_title)
             aligned_incoming, shift_ms = align_beats_perfect(
                 match_section, 
                 incoming_alignment_section, 
                 overlap_duration_ms, 
                 bpm_from, 
-                bpm_to
+                bpm_to,
+                track_names=track_names
             )
             
             # Update the full incoming track with aligned version
@@ -743,7 +985,23 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
         previous_track_audio = to_audio
         previous_track_start_in_mix = incoming_start_in_mix
         
+        # Add to mix overview
+        mix_overview_data.append({
+            'name': to_title,
+            'start_ms': incoming_start_in_mix,
+            'duration_ms': len(to_audio),
+            'bpm': bpm_to
+        })
+        
         print(f"   Mix length after: {len(mix)/1000:.1f}s")
+
+    # === GENERATE MIX OVERVIEW VISUALIZATION ===
+    if VISUALIZATION_ENABLED and len(mix_overview_data) > 0:
+        try:
+            print("\n📊 Generating mix overview visualization...")
+            plot_mix_overview(mix_overview_data)
+        except Exception as e:
+            print(f"⚠️  Mix overview visualization failed: {e}")
 
     print("\n" + "="*60)
     print("Normalizing & exporting final mix...")
