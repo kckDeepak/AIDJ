@@ -632,51 +632,61 @@ def align_beats_perfect(outgoing: AudioSegment, incoming: AudioSegment,
         print("   ⚠️  Insufficient beats detected, using basic alignment")
         return incoming, 0
     
-    # STEP 2: Calculate ACTUAL BPM from beat intervals (CRITICAL FIX)
-    # Use median of differences to be robust against detection errors
+    # STEP 2: Calculate detected BPM from beat intervals
+    # IMPORTANT: librosa detection is often wrong - trust metadata more
     outgoing_intervals = np.diff(outgoing_beats_initial / 1000)  # Convert to seconds
     incoming_intervals = np.diff(incoming_beats_initial / 1000)
     
-    period_out = np.median(outgoing_intervals)  # Seconds between beats
+    period_out = np.median(outgoing_intervals)
     period_in = np.median(incoming_intervals)
     
-    bpm_out_actual = 60 / period_out  # Convert to BPM
-    bpm_in_actual = 60 / period_in
+    bpm_out_detected = 60 / period_out
+    bpm_in_detected = 60 / period_in
     
-    # CRITICAL FIX: Detect and correct double-time / half-time errors
-    # librosa sometimes detects 2x or 0.5x the actual tempo
-    # We need to fix BOTH the BPM number AND the beat arrays
+    # IMPROVED BPM CORRECTION: Check multiple common librosa detection errors
+    # Handles: 2x (double-time), 0.5x (half-time), 1.5x (triplet), 1.33x (4/3 ratio), etc.
+    def correct_detected_bpm(detected, metadata, beats, downbeats, name):
+        """Correct detected BPM, handling common librosa detection errors."""
+        # Check common error ratios
+        ratios = [1.0, 2.0, 0.5, 1.5, 0.75, 1.333, 0.666]
+        
+        best_ratio = 1.0
+        best_diff = abs(detected - metadata)
+        
+        for ratio in ratios:
+            corrected = detected / ratio
+            diff = abs(corrected - metadata)
+            if diff < best_diff:
+                best_diff = diff
+                best_ratio = ratio
+        
+        corrected_bpm = detected / best_ratio
+        corrected_beats = beats
+        corrected_downbeats = downbeats
+        
+        if best_ratio == 2.0:
+            print(f"   ⚠️  {name}: Double-time detected ({detected:.1f} → {corrected_bpm:.1f} BPM)")
+            corrected_beats = beats[::2]
+            corrected_downbeats = downbeats[::2] if len(downbeats) > 0 else downbeats
+        elif best_ratio != 1.0:
+            print(f"   ⚠️  {name}: BPM corrected by {best_ratio}x ({detected:.1f} → {corrected_bpm:.1f} BPM)")
+        
+        # If still >10% off from metadata, trust metadata instead
+        if abs(corrected_bpm - metadata) / metadata > 0.10:
+            print(f"   ⚠️  {name}: Using metadata BPM {metadata:.1f} (detection {detected:.1f} unreliable)")
+            return metadata, beats, downbeats
+        
+        return corrected_bpm, corrected_beats, corrected_downbeats
     
-    outgoing_is_double = False
-    incoming_is_double = False
+    bpm_out_actual, outgoing_beats_initial, outgoing_downbeats_initial = correct_detected_bpm(
+        bpm_out_detected, bpm_from, outgoing_beats_initial, outgoing_downbeats_initial, "Outgoing")
     
-    # Check outgoing for double/half-time
-    if abs(bpm_out_actual - bpm_from * 2) < abs(bpm_out_actual - bpm_from):
-        print(f"   ⚠️  Detected double-time in outgoing: {bpm_out_actual:.2f} → {bpm_out_actual/2:.2f} BPM")
-        bpm_out_actual = bpm_out_actual / 2
-        outgoing_is_double = True
-        # FIX: Also fix the beat arrays - take every other beat
-        outgoing_beats_initial = outgoing_beats_initial[::2]
-        outgoing_downbeats_initial = outgoing_downbeats_initial[::2] if len(outgoing_downbeats_initial) > 0 else outgoing_downbeats_initial
-    elif abs(bpm_out_actual - bpm_from / 2) < abs(bpm_out_actual - bpm_from):
-        print(f"   ⚠️  Detected half-time in outgoing: {bpm_out_actual:.2f} → {bpm_out_actual*2:.2f} BPM")
-        bpm_out_actual = bpm_out_actual * 2
+    bpm_in_actual, incoming_beats_initial, incoming_downbeats_initial = correct_detected_bpm(
+        bpm_in_detected, bpm_to, incoming_beats_initial, incoming_downbeats_initial, "Incoming")
     
-    # Check incoming for double/half-time
-    if abs(bpm_in_actual - bpm_to * 2) < abs(bpm_in_actual - bpm_to):
-        print(f"   ⚠️  Detected double-time in incoming: {bpm_in_actual:.2f} → {bpm_in_actual/2:.2f} BPM")
-        bpm_in_actual = bpm_in_actual / 2
-        incoming_is_double = True
-        # FIX: Also fix the beat arrays - take every other beat
-        incoming_beats_initial = incoming_beats_initial[::2]
-        incoming_downbeats_initial = incoming_downbeats_initial[::2] if len(incoming_downbeats_initial) > 0 else incoming_downbeats_initial
-    elif abs(bpm_in_actual - bpm_to / 2) < abs(bpm_in_actual - bpm_to):
-        print(f"   ⚠️  Detected half-time in incoming: {bpm_in_actual:.2f} → {bpm_in_actual*2:.2f} BPM")
-        bpm_in_actual = bpm_in_actual * 2
-    
-    print(f"   → Actual BPM from beat intervals:")
-    print(f"     Outgoing: {bpm_out_actual:.2f} BPM (metadata: {bpm_from:.1f})")
-    print(f"     Incoming: {bpm_in_actual:.2f} BPM (metadata: {bpm_to:.1f})")
+    print(f"   → Final BPM values:")
+    print(f"     Outgoing: {bpm_out_actual:.2f} BPM (metadata: {bpm_from:.1f}, detected: {bpm_out_detected:.1f})")
+    print(f"     Incoming: {bpm_in_actual:.2f} BPM (metadata: {bpm_to:.1f}, detected: {bpm_in_detected:.1f})")
     
     # STEP 3: Time-stretch incoming to match outgoing (CRITICAL FIX)
     # This MUST happen BEFORE beat detection for alignment

@@ -269,10 +269,14 @@ def plot_beat_alignment(outgoing: AudioSegment, incoming: AudioSegment,
     ax2.set_xlim(0, max_duration_sec)
     ax2.set_ylim(-1.0, 1.0)
     
-    # Add info text
+    # Add info text - COUNT ONLY BEATS WITHIN THE 15-SECOND DISPLAY WINDOW
+    max_ms = max_duration_sec * 1000
+    out_beats_in_view = len([b for b in outgoing_beats if 0 <= b <= max_ms])
+    in_beats_in_view = len([b for b in incoming_beats if 0 <= b <= max_ms])
+    
     info_text = f'Beat Alignment Analysis:\n'
-    info_text += f'• Outgoing: {len(outgoing_beats)} beats detected\n'
-    info_text += f'• Incoming: {len(incoming_beats)} beats detected\n'
+    info_text += f'• Outgoing: {out_beats_in_view} beats in view\n'
+    info_text += f'• Incoming: {in_beats_in_view} beats in view\n'
     info_text += f'• Downbeats should align vertically'
     
     props = dict(boxstyle='round', facecolor='lightblue', alpha=0.8)
