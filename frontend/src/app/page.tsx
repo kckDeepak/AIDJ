@@ -917,15 +917,7 @@ export default function HomePage() {
                 onRename={handleRename}
                 onDownload={handleDownload}
                 onReorder={handleReorder}
-                onPlay={(song) => handlePlaySong({
-  id: 'mix.mp3',
-  name: finalTitle,
-  bpm: 120,
-  key: 'C',
-  file: new File([], 'mix.mp3'),
-  duration: 0,
-  isGenerated: true,
-});
+onPlay={(song) => handlePlaySong(song)}
               />
             </div>
 
@@ -1312,17 +1304,8 @@ export default function HomePage() {
               onRename={handleRename}
               onDownload={handleDownload}
               onReorder={handleReorder}
-              onPlay={(song) => handlePlaySong({
-  id: 'mix.mp3',
-  name: finalTitle,
-  bpm: 120,
-  key: 'C',
-  file: new File([], 'mix.mp3'),
-  duration: 0,
-  isGenerated: true,
-});
-
-            />
+onPlay={(song) => handlePlaySong(song)}
+/>
             <Disclaimer />
           </div>
         )}
