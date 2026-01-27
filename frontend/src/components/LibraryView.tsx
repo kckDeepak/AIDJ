@@ -229,13 +229,13 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                         fontSize: '13px',
                         transition: 'background 0.2s ease',
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(74, 158, 255, 0.2)'}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-bg)'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
                     <Download size={14} />
                     Download
                 </button>
-                
+
                 {/* Rename - available for all songs */}
                 <button
                     onClick={() => startRename(index, song.name)}
@@ -253,13 +253,13 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                         fontSize: '13px',
                         transition: 'background 0.2s ease',
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(74, 158, 255, 0.2)'}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-bg)'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
                     <Edit2 size={14} />
                     Rename
                 </button>
-                
+
                 {/* Delete */}
                 <button
                     onClick={() => {
@@ -309,7 +309,7 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                     margin: isMobile ? '0 0 12px 0' : '0 0 16px 0',
                     color: '#e0e0e0',
                 }}>
-                    Music Library
+                    <span style={{ color: 'var(--accent)' }}>Collection</span>
                 </h1>
 
                 {/* Search Bar */}
@@ -324,20 +324,21 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                             left: '14px',
                             top: '50%',
                             transform: 'translateY(-50%)',
-                            color: '#666',
+                            color: 'rgba(255, 255, 255, 0.4)',
                             pointerEvents: 'none',
                         }}
                     />
                     <input
                         type="text"
-                        placeholder="Search library..."
+                        placeholder="Search"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         style={{
                             width: '100%',
                             padding: '12px 14px 12px 42px',
-                            background: 'rgba(255, 255, 255, 0.05)',
-                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            background: 'rgba(255, 255, 255, 0.08)',
+                            backdropFilter: 'blur(10px)',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
                             borderRadius: '10px',
                             color: '#e0e0e0',
                             fontSize: '14px',
@@ -345,12 +346,12 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                             transition: 'all 0.2s ease',
                         }}
                         onFocus={(e) => {
-                            e.currentTarget.style.borderColor = 'rgba(74, 158, 255, 0.4)';
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                            e.currentTarget.style.borderColor = 'var(--accent-border)';
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
                         }}
                         onBlur={(e) => {
-                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
                         }}
                     />
                 </div>
@@ -388,13 +389,13 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                                 gap: isMobile ? '10px' : '14px',
                                 padding: isMobile ? '10px 12px' : '12px 14px',
                                 background: dragOverIndex === index
-                                    ? 'rgba(74, 158, 255, 0.15)'
+                                    ? 'var(--accent-bg)'
                                     : draggedIndex === index
-                                        ? 'rgba(74, 158, 255, 0.25)'
+                                        ? 'var(--accent-bg)'
                                         : 'rgba(255, 255, 255, 0.02)',
                                 borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
                                 borderLeft: dragOverIndex === index
-                                    ? '3px solid rgba(74, 158, 255, 0.6)'
+                                    ? '3px solid var(--accent-border)'
                                     : '3px solid transparent',
                                 cursor: isMobile ? 'pointer' : (draggedIndex === index ? 'grabbing' : 'grab'),
                                 opacity: draggedIndex === index ? 0.8 : 1,
@@ -417,23 +418,23 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                         >
                             {/* Drag Handle - Hide on mobile */}
                             {!isMobile && (
-                            <div
-                                style={{
-                                    cursor: 'grab',
-                                    color: '#666',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    transition: 'color 0.2s ease',
-                                }}
-                                onMouseEnter={(e) => {
-                                    e.currentTarget.style.color = '#999';
-                                }}
-                                onMouseLeave={(e) => {
-                                    e.currentTarget.style.color = '#666';
-                                }}
-                            >
-                                <GripVertical size={18} />
-                            </div>
+                                <div
+                                    style={{
+                                        cursor: 'grab',
+                                        color: '#666',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        transition: 'color 0.2s ease',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.color = '#999';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.color = '#666';
+                                    }}
+                                >
+                                    <GripVertical size={18} />
+                                </div>
                             )}
 
                             {/* Icon */}
@@ -443,7 +444,7 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                                 borderRadius: '8px',
                                 background: song.isGenerated
                                     ? 'linear-gradient(135deg, #a855f7, #6366f1)'
-                                    : 'linear-gradient(135deg, #4a9eff, #0ea5e9)',
+                                    : 'var(--accent)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -479,7 +480,7 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                                         style={{
                                             padding: '4px 8px',
                                             background: 'rgba(255, 255, 255, 0.1)',
-                                            border: '1px solid #4a9eff',
+                                            border: '1px solid var(--accent-border)',
                                             borderRadius: '4px',
                                             color: '#e0e0e0',
                                             fontSize: '14px',
@@ -518,12 +519,12 @@ export function LibraryView({ songs, onDelete, onRename, onDownload, onReorder, 
                                         padding: '2px 6px',
                                         background: song.isGenerated
                                             ? 'rgba(168, 85, 247, 0.15)'
-                                            : 'rgba(74, 158, 255, 0.15)',
-                                        border: `1px solid ${song.isGenerated ? 'rgba(168, 85, 247, 0.3)' : 'rgba(74, 158, 255, 0.3)'}`,
+                                            : 'var(--accent-bg)',
+                                        border: `1px solid ${song.isGenerated ? 'rgba(168, 85, 247, 0.3)' : 'var(--accent-border)'}`,
                                         borderRadius: '4px',
                                         fontSize: '10px',
                                         fontWeight: '600',
-                                        color: song.isGenerated ? '#c084fc' : '#60a5fa',
+                                        color: song.isGenerated ? '#c084fc' : 'var(--accent)',
                                     }}>
                                         {song.isGenerated ? 'AI Remix' : 'Original'}
                                     </span>

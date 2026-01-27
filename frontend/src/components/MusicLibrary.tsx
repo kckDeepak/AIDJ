@@ -203,13 +203,13 @@ export function MusicLibrary({
                         fontSize: '13px',
                         transition: 'background 0.2s ease',
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(74, 158, 255, 0.2)'}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-bg)'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
                     <Download size={14} />
                     Download
                 </button>
-                
+
                 {/* Rename - available for all songs */}
                 <button
                     onClick={() => startRename(index, song.name)}
@@ -227,13 +227,13 @@ export function MusicLibrary({
                         fontSize: '13px',
                         transition: 'background 0.2s ease',
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(74, 158, 255, 0.2)'}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-bg)'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
                     <Edit2 size={14} />
                     Rename
                 </button>
-                
+
                 {/* Delete */}
                 <button
                     onClick={() => {
@@ -305,25 +305,15 @@ export function MusicLibrary({
                             style={{
                                 padding: '10px',
                                 marginBottom: '6px',
-                                backgroundColor: dragOverIndex === index
-                                    ? 'rgba(74, 158, 255, 0.2)'
-                                    : hoveredIndex === index
-                                        ? song.isGenerated
-                                            ? 'rgba(74, 222, 128, 0.15)'
-                                            : 'rgba(255, 255, 255, 0.05)'
-                                        : 'transparent',
+                                backgroundColor: 'transparent',
                                 border: dragOverIndex === index
-                                    ? '2px solid rgba(74, 158, 255, 0.6)'
-                                    : hoveredIndex === index
-                                        ? '1px solid rgba(255, 255, 255, 0.1)'
-                                        : '1px solid transparent',
+                                    ? '1px solid var(--accent)'
+                                    : hoveredIndex === index || selectedSongIds.has(song.id)
+                                        ? '1px solid var(--accent)'
+                                        : '1px solid var(--gray-500)',
                                 borderRadius: '10px',
                                 transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                                boxShadow: selectedSongIds.has(song.id)
-                                    ? '0 0 15px rgba(74, 158, 255, 0.4)'
-                                    : hoveredIndex === index
-                                        ? '0 4px 20px rgba(74, 158, 255, 0.3)'
-                                        : 'none',
+                                boxShadow: 'none',
                                 position: 'relative',
                                 opacity: draggedIndex === index ? 0.5 : 1,
                                 cursor: 'grab',
@@ -339,7 +329,7 @@ export function MusicLibrary({
                                     checked={selectedSongIds.has(song.id)}
                                     onChange={() => onToggleSelection(song.id)}
                                     disabled={song.isGenerated}
-                                    style={{ accentColor: '#4a9eff', width: isMobile ? '18px' : '16px', height: isMobile ? '18px' : '16px' }}
+                                    style={{ accentColor: 'var(--accent)', width: isMobile ? '18px' : '16px', height: isMobile ? '18px' : '16px' }}
                                 />
 
                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -362,7 +352,7 @@ export function MusicLibrary({
                                                 width: '100%',
                                                 padding: '2px 6px',
                                                 background: 'rgba(255, 255, 255, 0.1)',
-                                                border: '1px solid #4a9eff',
+                                                border: '1px solid var(--accent-border)',
                                                 borderRadius: '4px',
                                                 color: '#e0e0e0',
                                                 fontSize: '13px',
@@ -371,7 +361,7 @@ export function MusicLibrary({
                                         />
                                     ) : (
                                         <>
-                                            <div 
+                                            <div
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     if (onPlay) onPlay(song);
@@ -387,7 +377,7 @@ export function MusicLibrary({
                                                     borderRadius: '4px',
                                                     transition: 'background 0.2s ease',
                                                 }}
-                                                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(74, 158, 255, 0.2)'}
+                                                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-bg)'}
                                                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                                                 title="Click to play"
                                             >
@@ -463,15 +453,15 @@ export function MusicLibrary({
                     padding: isMobile ? '14px' : '16px',
                     textAlign: 'center',
                     background: isAddMediaHovered || isDragging
-                        ? 'rgba(74, 158, 255, 0.15)'
+                        ? 'var(--accent-bg)'
                         : 'rgba(255, 255, 255, 0.05)',
-                    border: `1px solid ${isDragging ? 'rgba(74, 158, 255, 0.6)' : 'rgba(74, 158, 255, 0.3)'}`,
+                    border: `1px solid ${isDragging ? 'var(--accent-border)' : 'rgba(224, 64, 251, 0.3)'}`,
                     borderRadius: '12px',
                     cursor: 'pointer',
                     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                     boxShadow: isAddMediaHovered || isDragging
-                        ? '0 0 20px rgba(74, 158, 255, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1)'
-                        : '0 0 0 rgba(74, 158, 255, 0)',
+                        ? '0 0 20px var(--accent-glow), inset 0 1px 1px rgba(255, 255, 255, 0.1)'
+                        : '0 0 0 transparent',
                     transform: isAddMediaHovered && !isMobile ? 'scale(1.02)' : 'scale(1)',
                     minHeight: isMobile ? '48px' : 'auto',
                     display: 'flex',
@@ -493,7 +483,7 @@ export function MusicLibrary({
                         cursor: 'pointer',
                         fontSize: isMobile ? '14px' : '13px',
                         fontWeight: '600',
-                        color: isAddMediaHovered ? '#4a9eff' : '#e0e0e0',
+                        color: isAddMediaHovered ? 'var(--accent)' : 'var(--gray-100)',
                         transition: 'color 0.3s ease',
                     }}
                 >

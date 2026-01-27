@@ -22,13 +22,13 @@ export function AIDJLogo({ onRemixComplete }: AIDJLogoProps) {
       <Image
         src="/logo.png"
         alt="Modaura Logo"
-        width={160}
-        height={55}
+        width={220}
+        height={75}
         style={{
           objectFit: 'contain',
-          filter: onRemixComplete 
-            ? 'drop-shadow(0 0 10px rgba(74, 222, 128, 0.8)) drop-shadow(0 0 20px rgba(74, 222, 128, 0.5))'
-            : 'drop-shadow(0 0 10px rgba(255, 140, 0, 0.6)) drop-shadow(0 0 20px rgba(255, 140, 0, 0.3))',
+          filter: onRemixComplete
+            ? 'drop-shadow(0 0 10px rgba(224, 64, 251, 0.8)) drop-shadow(0 0 20px rgba(224, 64, 251, 0.5))'
+            : 'drop-shadow(0 0 10px rgba(224, 64, 251, 0.4)) drop-shadow(0 0 20px rgba(224, 64, 251, 0.2))',
           transition: 'filter 0.5s ease',
         }}
         priority

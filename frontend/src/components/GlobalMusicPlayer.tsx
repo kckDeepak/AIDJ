@@ -103,7 +103,7 @@ export function GlobalMusicPlayer({
                 bottom: 0,
                 left: 0,
                 right: 0,
-                background: 'linear-gradient(180deg, rgba(30, 30, 45, 0.85) 0%, rgba(20, 20, 35, 0.95) 100%)',
+                background: 'var(--bg-surface)',
                 backdropFilter: 'blur(30px) saturate(180%)',
                 WebkitBackdropFilter: 'blur(30px) saturate(180%)',
                 borderTop: '1px solid rgba(255, 255, 255, 0.15)',
@@ -129,11 +129,11 @@ export function GlobalMusicPlayer({
                         top: 0,
                         height: '100%',
                         width: `${progress}%`,
-                        background: 'linear-gradient(90deg, #4a9eff, #0ea5e9)',
+                        background: 'var(--accent)',
                         transition: 'width 0.1s linear',
                     }} />
                 </div>
-                
+
                 {/* Main Controls */}
                 <div style={{
                     display: 'flex',
@@ -154,8 +154,8 @@ export function GlobalMusicPlayer({
                             height: '42px',
                             borderRadius: '8px',
                             background: currentSong.isGenerated
-                                ? 'linear-gradient(135deg, #a855f7, #6366f1)'
-                                : 'linear-gradient(135deg, #4a9eff, #0ea5e9)',
+                                ? 'var(--accent)'
+                                : 'var(--accent)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
@@ -167,7 +167,7 @@ export function GlobalMusicPlayer({
                             <div style={{
                                 fontSize: '13px',
                                 fontWeight: '600',
-                                color: '#e0e0e0',
+                                color: 'var(--accent)',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
@@ -202,14 +202,14 @@ export function GlobalMusicPlayer({
                                 width: '44px',
                                 height: '44px',
                                 borderRadius: '50%',
-                                background: 'linear-gradient(135deg, #4a9eff, #0ea5e9)',
+                                background: 'var(--accent)',
                                 border: 'none',
                                 color: '#fff',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                boxShadow: '0 4px 15px rgba(74, 158, 255, 0.4)',
+                                boxShadow: '0 4px 15px var(--accent-glow)',
                             }}
                         >
                             {isPlaying ? <Pause size={22} /> : <Play size={22} style={{ marginLeft: '2px' }} />}
@@ -235,10 +235,10 @@ export function GlobalMusicPlayer({
                         <button
                             onClick={cycleMode}
                             style={{
-                                background: playbackMode !== 'order' ? 'rgba(74, 158, 255, 0.2)' : 'transparent',
+                                background: playbackMode !== 'order' ? 'var(--accent-bg)' : 'transparent',
                                 border: 'none',
                                 borderRadius: '6px',
-                                color: playbackMode !== 'order' ? '#4a9eff' : '#888',
+                                color: playbackMode !== 'order' ? 'var(--accent)' : 'var(--gray-300)',
                                 cursor: 'pointer',
                                 padding: '8px',
                                 display: 'flex',
@@ -273,7 +273,7 @@ export function GlobalMusicPlayer({
             left: 0,
             right: 0,
             height: '80px',
-            background: 'linear-gradient(180deg, rgba(30, 30, 45, 0.7) 0%, rgba(20, 20, 35, 0.85) 100%)',
+            background: 'var(--bg-surface)',
             backdropFilter: 'blur(30px) saturate(180%)',
             WebkitBackdropFilter: 'blur(30px) saturate(180%)',
             borderTop: '1px solid rgba(255, 255, 255, 0.15)',
@@ -296,8 +296,8 @@ export function GlobalMusicPlayer({
                     height: '48px',
                     borderRadius: '10px',
                     background: currentSong.isGenerated
-                        ? 'linear-gradient(135deg, #a855f7, #6366f1)'
-                        : 'linear-gradient(135deg, #4a9eff, #0ea5e9)',
+                        ? 'var(--accent)'
+                        : 'var(--accent)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -308,8 +308,8 @@ export function GlobalMusicPlayer({
                     <div style={{
                         fontSize: '14px',
                         fontWeight: '600',
-                        color: '#e0e0e0',
-                        maxWidth: '150px',
+                        color: 'var(--accent)',
+                        maxWidth: '200px',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -381,23 +381,23 @@ export function GlobalMusicPlayer({
                             width: '44px',
                             height: '44px',
                             borderRadius: '50%',
-                            background: 'linear-gradient(135deg, #4a9eff, #0ea5e9)',
+                            background: 'var(--accent)',
                             border: 'none',
                             color: '#fff',
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            boxShadow: '0 4px 15px rgba(74, 158, 255, 0.4)',
+                            boxShadow: '0 4px 15px var(--accent-glow)',
                             transition: 'transform 0.2s, box-shadow 0.2s',
                         }}
                         onMouseEnter={(e) => {
                             e.currentTarget.style.transform = 'scale(1.05)';
-                            e.currentTarget.style.boxShadow = '0 6px 20px rgba(74, 158, 255, 0.5)';
+                            e.currentTarget.style.boxShadow = '0 6px 20px var(--accent-glow)';
                         }}
                         onMouseLeave={(e) => {
                             e.currentTarget.style.transform = 'scale(1)';
-                            e.currentTarget.style.boxShadow = '0 4px 15px rgba(74, 158, 255, 0.4)';
+                            e.currentTarget.style.boxShadow = '0 4px 15px var(--accent-glow)';
                         }}
                     >
                         {isPlaying ? <Pause size={22} /> : <Play size={22} style={{ marginLeft: '2px' }} />}
@@ -471,7 +471,7 @@ export function GlobalMusicPlayer({
                             top: 0,
                             height: '100%',
                             width: `${progress}%`,
-                            background: 'linear-gradient(90deg, #4a9eff, #0ea5e9)',
+                            background: 'var(--accent)',
                             borderRadius: '2px',
                             transition: 'width 0.1s linear',
                         }} />
@@ -504,10 +504,10 @@ export function GlobalMusicPlayer({
                     onClick={cycleMode}
                     title={`Mode: ${playbackMode}`}
                     style={{
-                        background: playbackMode !== 'order' ? 'rgba(74, 158, 255, 0.2)' : 'transparent',
+                        background: playbackMode !== 'order' ? 'var(--accent-bg)' : 'transparent',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
                         borderRadius: '8px',
-                        color: playbackMode !== 'order' ? '#4a9eff' : '#888',
+                        color: playbackMode !== 'order' ? 'var(--accent)' : 'var(--gray-300)',
                         cursor: 'pointer',
                         padding: '8px',
                         display: 'flex',

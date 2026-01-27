@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 @import './scrollbar.css';
+@import '../styles/colors.css';
 
 * {
   margin: 0;
@@ -25,13 +26,14 @@ body {
   body {
     -webkit-overflow-scrolling: touch;
   }
-  
+
   /* Larger touch targets */
-  button, .clickable {
+  button,
+  .clickable {
     min-height: 44px;
     min-width: 44px;
   }
-  
+
   /* Better text sizing for mobile */
   html {
     font-size: 14px;

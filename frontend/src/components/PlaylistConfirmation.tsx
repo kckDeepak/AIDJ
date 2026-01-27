@@ -114,18 +114,18 @@ export function PlaylistConfirmation({
           background: 'linear-gradient(180deg, rgba(74, 158, 255, 0.1), transparent)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-            <Sparkles size={isMobile ? 20 : 24} color="#4a9eff" />
+            <Sparkles size={isMobile ? 20 : 24} color="var(--accent)" />
             <h2 style={{ margin: 0, fontSize: isMobile ? '18px' : '22px', fontWeight: '700' }}>
               AI Generated Playlist
             </h2>
           </div>
           <p style={{ margin: 0, fontSize: isMobile ? '13px' : '14px', color: '#888' }}>
-            For: <span style={{ color: '#4a9eff', fontWeight: '500' }}>{occasion}</span>
+            For: <span style={{ color: 'var(--accent)', fontWeight: '500' }}>{occasion}</span>
           </p>
           {!isMobile && (
-          <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#666' }}>
-            Drag to reorder • Click × to remove • Click song to request placement
-          </p>
+            <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#666' }}>
+              Drag to reorder • Click × to remove • Click song to request placement
+            </p>
           )}
         </div>
 
@@ -173,7 +173,7 @@ export function PlaylistConfirmation({
                 width: isMobile ? '24px' : '28px',
                 height: isMobile ? '24px' : '28px',
                 borderRadius: '50%',
-                background: 'linear-gradient(135deg, #4a9eff, #a855f7)',
+                background: 'var(--accent)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -198,7 +198,7 @@ export function PlaylistConfirmation({
 
               {/* Transition Arrow (except last) */}
               {index < playlist.length - 1 && (
-                <ArrowRight size={16} color="#4a9eff" style={{ opacity: 0.5 }} />
+                <ArrowRight size={16} color="var(--accent)" style={{ opacity: 0.5 }} />
               )}
 
               {/* Remove Button */}
@@ -273,7 +273,7 @@ export function PlaylistConfirmation({
               padding: isMobile ? '14px 20px' : '12px 32px',
               background: playlist.length < 2
                 ? 'rgba(100, 100, 100, 0.3)'
-                : 'linear-gradient(135deg, #4a9eff, #a855f7)',
+                : 'var(--accent)',
               border: 'none',
               borderRadius: '10px',
               color: playlist.length < 2 ? '#666' : '#fff',

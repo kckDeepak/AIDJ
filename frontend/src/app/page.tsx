@@ -17,6 +17,7 @@ import { Navigation } from '@/components/Navigation';
 import { GlobalMusicPlayer } from '@/components/GlobalMusicPlayer';
 import { PlaylistConfirmation } from '@/components/PlaylistConfirmation';
 import { SoundStrings, getBlendedGradient } from '@/components/SoundStrings';
+import { Disclaimer } from '@/components/Disclaimer';
 
 interface Song {
   id: string;
@@ -156,7 +157,7 @@ export default function HomePage() {
 
         // Use the custom title or auto-generated name
         const finalTitle = remixTitle.trim() || `Remix ${remixCounter}`;
-        
+
         const remixedSong: Song = {
           id: 'mix.mp3', // Use actual filename for audio URL
           name: finalTitle,
@@ -166,7 +167,7 @@ export default function HomePage() {
           isGenerated: true,
         };
         setSongs((prev) => [...prev, remixedSong]);
-        
+
         // Auto-play the remix in GlobalMusicPlayer
         setTimeout(() => {
           handlePlaySong({
@@ -267,7 +268,7 @@ export default function HomePage() {
       );
       return;
     }
-    
+
     try {
       const response = await fetch(
         `http://localhost:8000/api/songs/${encodeURIComponent(filename)}/rename?new_name=${encodeURIComponent(newName)}`,
@@ -319,40 +320,40 @@ export default function HomePage() {
       handlePlayPause();
       return;
     }
-    
+
     setCurrentPlayingSong(song);
     setPlayerCurrentTime(0);
-    
+
     // Create audio URL - check if it's a generated remix or regular song
-    const audioUrl = song.isGenerated 
+    const audioUrl = song.isGenerated
       ? `http://localhost:8000/static/output/mix.mp3`
       : `http://localhost:8000/static/songs/${encodeURIComponent(song.id)}`;
-    
+
     // Create or update audio element
     if (audioRef.current) {
       audioRef.current.pause();
     }
-    
+
     const audio = new Audio(audioUrl);
     audioRef.current = audio;
-    
+
     audio.addEventListener('loadedmetadata', () => {
       setPlayerDuration(audio.duration);
     });
-    
+
     audio.addEventListener('timeupdate', () => {
       setPlayerCurrentTime(audio.currentTime);
     });
-    
+
     audio.addEventListener('ended', () => {
       handleNextSong();
     });
-    
+
     audio.addEventListener('error', (e) => {
       console.error('Audio error:', e);
       setIsAudioPlaying(false);
     });
-    
+
     audio.play().then(() => {
       setIsAudioPlaying(true);
     }).catch(err => {
@@ -363,7 +364,7 @@ export default function HomePage() {
 
   function handlePlayPause() {
     if (!audioRef.current) return;
-    
+
     if (isAudioPlaying) {
       audioRef.current.pause();
       setIsAudioPlaying(false);
@@ -438,11 +439,11 @@ export default function HomePage() {
       // Check if it's a generated song
       const song = songs.find(s => s.id === filename);
       const isGenerated = song?.isGenerated || filename === 'mix.mp3';
-      
-      const url = isGenerated 
+
+      const url = isGenerated
         ? `http://localhost:8000/static/output/mix.mp3`
         : `http://localhost:8000/static/songs/${encodeURIComponent(filename)}`;
-      
+
       const response = await fetch(url);
       if (response.ok) {
         const blob = await response.blob();
@@ -549,7 +550,7 @@ export default function HomePage() {
     // In a full implementation, this would call an AI endpoint
     const selectedSongs = songs.filter((song) => selectedSongIds.has(song.id));
     const playlistSongs = selectedSongs.length > 0 ? selectedSongs : songs.slice(0, 5);
-    
+
     // Simulate AI processing
     setTimeout(() => {
       setGeneratedPlaylist(playlistSongs);
@@ -562,7 +563,7 @@ export default function HomePage() {
   async function handleConfirmPlaylist(confirmedPlaylist: Song[]) {
     setGeneratedPlaylist(confirmedPlaylist);
     setWorkflowState('mixing');
-    
+
     // Update selected song IDs to match confirmed playlist
     const newSelectedIds = new Set(confirmedPlaylist.map(s => s.id));
     setSelectedSongIds(newSelectedIds);
@@ -609,16 +610,16 @@ export default function HomePage() {
     setGeneratedPlaylist(prev => {
       const songIndex = prev.findIndex(s => s.id === songId);
       const nearIndex = prev.findIndex(s => s.id === nearSongId);
-      
+
       if (songIndex === -1 || nearIndex === -1) return prev;
-      
+
       const newPlaylist = [...prev];
       const [song] = newPlaylist.splice(songIndex, 1);
-      
+
       // Insert after the target song
       const insertIndex = songIndex < nearIndex ? nearIndex : nearIndex + 1;
       newPlaylist.splice(insertIndex, 0, song);
-      
+
       return newPlaylist;
     });
   }
@@ -641,12 +642,12 @@ export default function HomePage() {
   // Pause mixing
   async function handlePauseMix() {
     if (!currentJobId) return;
-    
+
     try {
       const response = await fetch(`http://localhost:8000/api/mix/pause/${currentJobId}`, {
         method: 'POST',
       });
-      
+
       if (response.ok) {
         setIsPaused(true);
       }
@@ -658,12 +659,12 @@ export default function HomePage() {
   // Resume mixing
   async function handleResumeMix() {
     if (!currentJobId) return;
-    
+
     try {
       const response = await fetch(`http://localhost:8000/api/mix/resume/${currentJobId}`, {
         method: 'POST',
       });
-      
+
       if (response.ok) {
         setIsPaused(false);
       }
@@ -675,14 +676,14 @@ export default function HomePage() {
   // Cancel mixing
   async function handleCancelMix() {
     if (!currentJobId) return;
-    
+
     if (!confirm('Are you sure you want to cancel the mix generation?')) return;
-    
+
     try {
       const response = await fetch(`http://localhost:8000/api/mix/cancel/${currentJobId}`, {
         method: 'POST',
       });
-      
+
       if (response.ok) {
         setIsRemixing(false);
         setIsPaused(false);
@@ -738,10 +739,10 @@ export default function HomePage() {
             onClick={() => setShowMobileLibrary(!showMobileLibrary)}
             style={{
               padding: '10px',
-              background: showMobileLibrary ? 'rgba(74, 158, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-              border: showMobileLibrary ? '1px solid rgba(74, 158, 255, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
+              background: showMobileLibrary ? 'var(--accent-bg)' : 'rgba(255, 255, 255, 0.05)',
+              border: showMobileLibrary ? '1px solid var(--accent-border)' : '1px solid rgba(255, 255, 255, 0.1)',
               borderRadius: '10px',
-              color: showMobileLibrary ? '#4a9eff' : '#999',
+              color: showMobileLibrary ? 'var(--accent)' : 'var(--gray-300)',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -756,7 +757,7 @@ export default function HomePage() {
             </svg>
           </button>
         )}
-        
+
         {/* Logo Container */}
         <div style={{ position: 'static', transform: isMobile ? 'scale(0.85)' : 'none', transformOrigin: 'left center' }}>
           <AIDJLogo onRemixComplete={hasRemixed} />
@@ -777,17 +778,17 @@ export default function HomePage() {
         flex: 1,
         padding: isMobile ? '12px' : '20px',
         gap: isMobile ? '12px' : '20px',
-        overflow: 'hidden',
+        overflow: 'auto',
       }}>
         {/* View Switching */}
         {activeTab === 'remix' && (
+          <>
           <div style={{
             display: 'flex',
             flexDirection: isMobile ? 'column' : 'row',
             flex: 1,
             gap: isMobile ? '12px' : '20px',
-            overflow: 'hidden',
-            minHeight: 0,
+            minHeight: isMobile ? 'auto' : '500px',
             paddingBottom: currentPlayingSong ? (isMobile ? '100px' : '80px') : '0',
             transition: 'padding-bottom 0.3s ease',
             position: 'relative',
@@ -807,7 +808,7 @@ export default function HomePage() {
                 onClick={() => setShowMobileLibrary(false)}
               />
             )}
-            
+
             {/* LEFT PANEL - Enhanced Music Library */}
             <div style={{
               width: isMobile ? (showMobileLibrary ? '85%' : '0') : 'clamp(280px, 28%, 400px)',
@@ -833,7 +834,7 @@ export default function HomePage() {
             }}>
               {/* Header with Search */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                <h2 style={{ margin: 0, fontSize: isMobile ? '16px' : '18px', fontWeight: '600', whiteSpace: 'nowrap' }}>Music Library</h2>
+                <h2 style={{ margin: 0, fontSize: isMobile ? '16px' : '18px', fontWeight: '600', whiteSpace: 'nowrap', color: 'var(--accent)' }}>Stack</h2>
                 {isMobile && (
                   <button
                     onClick={() => setShowMobileLibrary(false)}
@@ -851,59 +852,59 @@ export default function HomePage() {
                   </button>
                 )}
               </div>
-              <div style={{ 
+              <div style={{
                 position: 'relative',
                 display: 'flex',
                 alignItems: 'center',
                 marginBottom: '10px',
               }}>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={librarySearchQuery}
-                    onChange={(e) => setLibrarySearchQuery(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '6px 12px 6px 32px',
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                      borderRadius: '8px',
-                      color: '#e0e0e0',
-                      fontSize: '13px',
-                      outline: 'none',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.border = '1px solid rgba(74, 158, 255, 0.5)';
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.15)';
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                    }}
-                  />
-                  <svg
-                    style={{
-                      position: 'absolute',
-                      left: '10px',
-                      width: '14px',
-                      height: '14px',
-                      color: '#888',
-                      pointerEvents: 'none',
-                    }}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={librarySearchQuery}
+                  onChange={(e) => setLibrarySearchQuery(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px 12px 6px 32px',
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    borderRadius: '8px',
+                    color: '#e0e0e0',
+                    fontSize: '13px',
+                    outline: 'none',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.border = '1px solid var(--accent-border)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                  }}
+                />
+                <svg
+                  style={{
+                    position: 'absolute',
+                    left: '10px',
+                    width: '14px',
+                    height: '14px',
+                    color: '#888',
+                    pointerEvents: 'none',
+                  }}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
 
               <AIBot state={botState} isPlaying={isAudioPlaying} progressPercent={progressPercent} />
 
               <MusicLibrary
-                songs={songs.filter(song => 
-                  librarySearchQuery === '' || 
+                songs={songs.filter(song =>
+                  librarySearchQuery === '' ||
                   song.name.toLowerCase().includes(librarySearchQuery.toLowerCase()) ||
                   song.key.toLowerCase().includes(librarySearchQuery.toLowerCase()) ||
                   song.bpm.toString().includes(librarySearchQuery)
@@ -943,16 +944,16 @@ export default function HomePage() {
               minWidth: 0,
               minHeight: isMobile ? '0' : 'auto',
             }}>
-              <EnergyWave intensity={waveIntensity} isActive={isRemixing || selectedSongIds.size > 0} />
+              {/* EnergyWave removed for cleaner look */}
 
-              <h2 style={{ margin: '0 0 12px 0', fontSize: isMobile ? '16px' : '18px', position: 'relative', zIndex: 2, fontWeight: '600' }}>
-                🎵 Create Your Mix
+              <h2 style={{ margin: '0 0 12px 0', fontSize: isMobile ? '16px' : '18px', position: 'relative', zIndex: 2, fontWeight: '600', color: 'var(--accent)' }}>
+                Studio
               </h2>
 
               {/* Natural Language Input Section */}
               <div style={{ marginBottom: isMobile ? '15px' : '20px', position: 'relative', zIndex: 2 }}>
                 <label style={{ display: 'block', marginBottom: '6px', fontSize: isMobile ? '13px' : '14px', color: '#ccc', fontWeight: '500' }}>
-                  Describe your occasion or vibe:
+                  Describe your vibe:
                 </label>
                 <textarea
                   value={occasionPrompt}
@@ -964,13 +965,13 @@ export default function HomePage() {
                     minHeight: isMobile ? '60px' : '80px',
                     padding: isMobile ? '12px' : '14px 16px',
                     background: 'rgba(255, 255, 255, 0.05)',
-                    border: occasionPrompt.length > 0 ? '1px solid rgba(74, 158, 255, 0.4)' : '1px solid rgba(255, 255, 255, 0.15)',
+                    border: occasionPrompt.length > 0 ? '1px solid var(--accent-border)' : '1px solid rgba(255, 255, 255, 0.15)',
                     borderRadius: '12px',
                     color: '#e0e0e0',
                     fontSize: isMobile ? '14px' : '14px',
                     resize: 'vertical',
                     transition: 'all 0.3s ease',
-                    boxShadow: occasionPrompt.length > 0 ? '0 0 20px rgba(74, 158, 255, 0.2)' : 'none',
+                    boxShadow: occasionPrompt.length > 0 ? '0 0 20px var(--accent-glow)' : 'none',
                     fontFamily: 'inherit',
                   }}
                 />
@@ -1057,22 +1058,29 @@ export default function HomePage() {
                           padding: '10px',
                           textAlign: 'center',
                           position: 'relative',
+                          zIndex: 3,
+                          boxShadow: isRemixing ? `0 0 20px var(--accent-glow)` : 'none',
+                          transition: 'all 0.5s ease',
+                          animation: isRemixing ? `pulse 2s ease-in-out infinite ${idx * 0.2}s` : 'none',
+                          fontSize: '12px',
+                          fontWeight: '500',
+                        }}
+                      >
+                        {song.name}
+                      </div>
+                    ))}
+                    {selectedSongs.length === 0 && (
+                      <div style={{
+                        color: 'var(--accent)',
+                        position: 'relative',
                         zIndex: 3,
-                        boxShadow: isRemixing ? `0 0 20px rgba(74, 158, 255, 0.4)` : 'none',
-                        transition: 'all 0.5s ease',
-                        animation: isRemixing ? `pulse 2s ease-in-out infinite ${idx * 0.2}s` : 'none',
-                        fontSize: '12px',
-                        fontWeight: '500',
-                      }}
-                    >
-                      {song.name}
-                    </div>
-                  ))}
-                  {selectedSongs.length === 0 && (
-                    <div style={{ color: '#666', position: 'relative', zIndex: 3, fontSize: '13px', padding: '20px' }}>
-                      Select songs from the library or just describe your vibe
-                    </div>
-                  )}
+                        fontSize: '13px',
+                        padding: '20px',
+                        animation: 'purplePulse 2s ease-in-out infinite',
+                      }}>
+                        Select your stack to vibe
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1088,7 +1096,7 @@ export default function HomePage() {
                     padding: isMobile ? '14px 20px' : '14px 28px',
                     background: !occasionPrompt.trim() || isRemixing
                       ? 'rgba(100, 100, 100, 0.3)'
-                      : 'linear-gradient(135deg, rgba(74, 158, 255, 0.8), rgba(168, 85, 247, 0.8))',
+                      : 'var(--accent)',
                     color: !occasionPrompt.trim() || isRemixing ? '#666' : '#fff',
                     border: '1px solid rgba(255, 255, 255, 0.2)',
                     borderRadius: '12px',
@@ -1097,7 +1105,7 @@ export default function HomePage() {
                     fontWeight: '700',
                     transition: 'all 0.3s ease',
                     boxShadow: occasionPrompt.trim() && !isRemixing
-                      ? '0 4px 20px rgba(74, 158, 255, 0.4)'
+                      ? '0 4px 20px var(--accent-glow)'
                       : 'none',
                     textTransform: 'uppercase',
                     letterSpacing: isMobile ? '0.5px' : '1px',
@@ -1135,7 +1143,7 @@ export default function HomePage() {
                 <div style={{ marginTop: '15px', position: 'relative', zIndex: 2 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                     <h3 style={{ fontSize: '15px', fontWeight: '600', margin: 0 }}>Pipeline Progress</h3>
-                    
+
                     {/* Pause/Cancel Controls */}
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button
@@ -1215,13 +1223,13 @@ export default function HomePage() {
                       <div style={{
                         height: '100%',
                         width: `${progressPercent}%`,
-                        background: isPaused 
-                          ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' 
+                        background: isPaused
+                          ? 'linear-gradient(90deg, #fbbf24, #f59e0b)'
                           : getBlendedGradient(selectedSongs.length),
                         transition: 'width 0.5s ease',
-                        boxShadow: isPaused 
-                          ? '0 0 15px rgba(251, 191, 36, 0.6)' 
-                          : '0 0 15px rgba(74, 158, 255, 0.6)',
+                        boxShadow: isPaused
+                          ? '0 0 15px rgba(251, 191, 36, 0.6)'
+                          : '0 0 15px var(--accent-glow)',
                         animation: !isPaused ? 'shimmer 2s ease-in-out infinite' : 'none',
                       }} />
                     </div>
@@ -1237,14 +1245,14 @@ export default function HomePage() {
                           background: stage.status === 'complete'
                             ? 'rgba(74, 222, 128, 0.15)'
                             : stage.status === 'running'
-                              ? isPaused ? 'rgba(251, 191, 36, 0.15)' : 'rgba(74, 158, 255, 0.15)'
+                              ? isPaused ? 'rgba(251, 191, 36, 0.15)' : 'var(--accent-bg)'
                               : 'rgba(255, 255, 255, 0.03)',
                           border: '1px solid rgba(255, 255, 255, 0.1)',
                           borderRadius: '8px',
                           fontSize: '12px',
                           transition: 'all 0.5s ease',
-                          boxShadow: stage.status === 'running' 
-                            ? isPaused ? '0 0 15px rgba(251, 191, 36, 0.3)' : '0 0 15px rgba(74, 158, 255, 0.3)' 
+                          boxShadow: stage.status === 'running'
+                            ? isPaused ? '0 0 15px rgba(251, 191, 36, 0.3)' : '0 0 15px var(--accent-glow)'
                             : 'none',
                         }}
                       >
@@ -1275,6 +1283,12 @@ export default function HomePage() {
               )}
             </div>
           </div>
+
+          {/* Disclaimer for Remix Tab - Separate at bottom */}
+          <div style={{ padding: isMobile ? '0 12px 12px' : '0 20px 20px' }}>
+            <Disclaimer />
+          </div>
+        </>
         )}
 
         {/* Library View */}
@@ -1305,6 +1319,7 @@ export default function HomePage() {
                 duration: song.duration || 0,
               })}
             />
+            <Disclaimer />
           </div>
         )}
 
@@ -1315,11 +1330,10 @@ export default function HomePage() {
             padding: isMobile ? '12px' : '20px',
             paddingBottom: currentPlayingSong ? (isMobile ? '110px' : '100px') : (isMobile ? '12px' : '20px'),
             display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            background: 'rgba(20, 20, 30, 0.4)',
-            backdropFilter: 'blur(16px) saturate(180%)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            flexDirection: 'column',
+            alignItems: 'center',
+            background: 'transparent',
+            border: 'none',
             borderRadius: isMobile ? '16px' : '20px',
             overflow: 'auto',
             transition: 'padding-bottom 0.3s ease',
@@ -1328,6 +1342,9 @@ export default function HomePage() {
               totalSongs={songs.filter(s => !s.isGenerated).length}
               totalRemixes={songs.filter(s => s.isGenerated).length}
             />
+            <div style={{ width: '100%', maxWidth: '500px', padding: '0 24px' }}>
+              <Disclaimer />
+            </div>
           </div>
         )}
       </div>
@@ -1351,6 +1368,10 @@ export default function HomePage() {
           0% { filter: brightness(1); }
           50% { filter: brightness(1.3); }
           100% { filter: brightness(1); }
+        }
+        @keyframes purplePulse {
+          0%, 100% { opacity: 0.5; }
+          50% { opacity: 1; text-shadow: 0 0 10px var(--accent-glow); }
         }
         
         /* Scrollbar styling */
