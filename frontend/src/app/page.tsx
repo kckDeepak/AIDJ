@@ -170,17 +170,17 @@ export default function HomePage() {
 
         // Auto-play the remix in GlobalMusicPlayer
         setTimeout(() => {
-         handlePlaySong({
-  id: 'mix.mp3',
-  name: finalTitle,          // ✅ matches interface
-  bpm: 120,
-  key: 'C',                  // ✅ matches interface
-  file: new File([], 'mix.mp3'), // ✅ required field
-  duration: 0,
-  isGenerated: true,
-});
-
-        }, 500);
+   setTimeout(() => {
+  handlePlaySong({
+    id: 'mix.mp3',
+    name: finalTitle,              // ✅ correct
+    bpm: 120,
+    key: 'C',                      // ✅ correct
+    file: new File([], 'mix.mp3'), // ✅ required
+    isGenerated: true,
+    duration: 0,
+  });
+}, 500);
       } else if (message.type === 'error') {
         console.error('Mix generation failed:', message.message);
         setIsRemixing(false);
