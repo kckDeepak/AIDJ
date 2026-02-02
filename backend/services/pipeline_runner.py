@@ -170,7 +170,8 @@ class PipelineRunner:
             await asyncio.to_thread(
                 combined_engine,
                 self.job.prompt,
-                output_path=str(output_dir / "analyzed_setlist.json")
+                output_path=str(output_dir / "analyzed_setlist.json"),
+                songs_dir=str(songs_dir)
             )
             await self.update_stage(1, "complete")
             await self.log("Song selection complete ✓")

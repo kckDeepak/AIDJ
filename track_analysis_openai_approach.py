@@ -29,6 +29,13 @@ if OpenAI is not None:
 SONGS_DIR = "./songs"
 OUTPUT_FILE = "analyzed_setlist.json"
 
+# Allow overriding songs directory at runtime
+_songs_dir_override = None
+
+def get_songs_dir():
+    """Get the songs directory path, preferring override if set."""
+    return _songs_dir_override if _songs_dir_override else SONGS_DIR
+
 
 def select_and_order_songs_with_openai(available_songs, user_input):
     """
@@ -109,10 +116,13 @@ IMPORTANT:
 def get_available_songs():
     """Scan songs directory and return list of available songs."""
     songs = []
-    if not os.path.exists(SONGS_DIR):
+    songs_dir = get_songs_dir()
+    if not os.path.exists(songs_dir):
+        print(f"⚠️ Songs directory does not exist: {songs_dir}")
         return songs
-        
-    for filename in os.listdir(SONGS_DIR):
+    
+    print(f"📂 Scanning songs directory: {songs_dir}")
+    for filename in os.listdir(songs_dir):
         if not filename.lower().endswith(".mp3"):
             continue
             
@@ -198,11 +208,22 @@ def apply_energy_curve_ordering(songs):
     return reordered
 
 
-def combined_engine(user_input, output_path="output/analyzed_setlist.json"):
+def combined_engine(user_input, output_path="output/analyzed_setlist.json", songs_dir=None):
     """
     Main entry point: Get available songs, let OpenAI select and order them based on user request.
     Works with ANY request format - specific requirements or just "make a mix with all songs".
+    
+    Args:
+        user_input: The user's request for the mix
+        output_path: Where to save the analyzed setlist JSON
+        songs_dir: Optional path to songs directory (uses ./songs if not provided)
     """
+    global _songs_dir_override
+    
+    # Set the songs directory override if provided
+    if songs_dir:
+        _songs_dir_override = songs_dir
+    
     try:
         print("="*60)
         print("STAGE 1: SONG SELECTION")
@@ -211,7 +232,8 @@ def combined_engine(user_input, output_path="output/analyzed_setlist.json"):
         # Step 1: Get all available songs
         all_songs = get_available_songs()
         if not all_songs:
-            print("❌ No songs found in ./songs directory")
+            current_dir = get_songs_dir()
+            print(f"❌ No songs found in {current_dir}")
             return None
         
         print(f"📁 Found {len(all_songs)} songs in library")
