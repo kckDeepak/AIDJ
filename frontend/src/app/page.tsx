@@ -245,7 +245,7 @@ export default function HomePage() {
         // Upload to Supabase Storage via backend
         console.log('📤 Uploading to Supabase Storage...');
         const uploadResult = await uploadToSupabase(file, (progress) => {
-          console.log(`Upload progress: ${progress.percentage.toFixed(1)}%`);
+          console.log(`Upload progress: ${progress.percent.toFixed(1)}%`);
           // TODO: Show progress UI (future enhancement)
         });
 
