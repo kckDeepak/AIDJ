@@ -217,18 +217,52 @@ class PipelineRunner:
             await self.update_stage(5, "running")
             await self.log("Creating final audio mix... This may take a few minutes.")
             
+            mix_path = output_dir / "mix.mp3"
             await asyncio.to_thread(
                 generate_mix,
                 mixing_plan_json=str(output_dir / "mixing_plan.json"),
                 structure_json=str(output_dir / "structure_data.json"),
-                output_path=str(output_dir / "mix.mp3")
+                output_path=str(mix_path)
             )
             await self.update_stage(5, "complete")
             await self.log("Mix generation complete! 🎧")
             
+            # Upload final mix to Supabase for persistent storage
+            mix_url = "/static/output/mix.mp3"  # Default fallback
+            try:
+                from backend.services.supabase_storage import upload_file
+                
+                if mix_path.exists():
+                    await self.log("Uploading final mix to Supabase...")
+                    
+                    with open(mix_path, "rb") as f:
+                        mix_data = f.read()
+                    
+                    # Upload with timestamp to avoid conflicts
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    mix_filename = f"mix_{timestamp}.mp3"
+                    
+                    result = await asyncio.to_thread(
+                        upload_file,
+                        mix_data,
+                        mix_filename,
+                        "audio/mpeg"
+                    )
+                    
+                    if result.get("url"):
+                        mix_url = result["url"]
+                        await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
+                    else:
+                        await self.log(f"⚠️ Supabase upload failed, using local URL")
+                        
+            except Exception as e:
+                await self.log(f"⚠️ Could not upload to Supabase: {e}")
+                # Continue anyway, use local URL
+            
             # Complete
             self.job.status = JobStatus.COMPLETE
-            self.job.mix_url = "/static/output/mix.mp3"
+            self.job.mix_url = mix_url
             self.job.completed_at = datetime.now()
             self.job.progress_percent = 100
             

@@ -170,6 +170,7 @@ export default function HomePage() {
           key: 'C',
           file: new File([], 'mix.mp3'),
           isGenerated: true,
+          url: message.mix_url, // Add the Supabase URL from backend
         };
         setSongs((prev) => [...prev, remixedSong]);
 
@@ -183,6 +184,7 @@ export default function HomePage() {
             file: new File([], 'mix.mp3'),
             isGenerated: true,
             duration: 0,
+            url: message.mix_url, // Pass the URL for playback
           });
         }, 500);
       } else if (message.type === 'error') {
@@ -398,7 +400,7 @@ export default function HomePage() {
 
     // Create audio URL - check if it's a generated remix or regular song
     const audioUrl = song.isGenerated
-      ? `${API_BASE_URL}/static/output/mix.mp3`
+      ? (song.url || `${API_BASE_URL}/static/output/mix.mp3`)  // Use Supabase URL if available
       : `${API_BASE_URL}/static/songs/${encodeURIComponent(song.id)}`;
 
     // Create or update audio element
@@ -513,7 +515,7 @@ export default function HomePage() {
       const isGenerated = song?.isGenerated || filename === 'mix.mp3';
 
       const url = isGenerated
-        ? `${API_BASE_URL}/static/output/mix.mp3`
+        ? (song?.url || `${API_BASE_URL}/static/output/mix.mp3`)  // Use Supabase URL if available
         : `${API_BASE_URL}/static/songs/${encodeURIComponent(filename)}`;
 
       const response = await fetch(url);
