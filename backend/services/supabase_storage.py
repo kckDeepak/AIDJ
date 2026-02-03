@@ -170,6 +170,16 @@ def upload_mix_file(file_data: bytes, filename: str, content_type: str = "audio/
         }
     
     try:
+        # Validate file data
+        if not file_data or len(file_data) == 0:
+            return {
+                "success": False,
+                "url": None,
+                "error": "File data is empty"
+            }
+        
+        print(f"📤 Uploading mix: {filename} ({len(file_data)} bytes)")
+        
         # Upload to mixes/ folder for backup/organization
         mixes_path = f"mixes/{filename}"
         try:
@@ -190,10 +200,16 @@ def upload_mix_file(file_data: bytes, filename: str, content_type: str = "audio/
             file_options={"content-type": content_type, "upsert": True}
         )
         
+        print(f"✅ Upload successful: {result}")
+        
         # Get public URL from songs folder (this is what users will access)
         public_url = client.storage.from_(AUDIO_BUCKET).get_public_url(songs_path)
         
+        if not public_url:
+            raise Exception("Failed to get public URL")
+        
         print(f"✅ Uploaded mix to Supabase (songs/ folder): {filename}")
+        print(f"✅ Public URL: {public_url}")
         print(f"✅ Mix will appear in song list on reload")
         
         return {

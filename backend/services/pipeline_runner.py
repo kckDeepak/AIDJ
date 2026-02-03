@@ -301,9 +301,15 @@ class PipelineRunner:
                     if result.get("url"):
                         mix_url = result["url"]
                         await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
-                        await self.log(f"Mix URL: {mix_url}")
+                        await self.log(f"🔗 Mix URL: {mix_url}")
+                        
+                        # Validate URL format
+                        if not mix_url.startswith(("http://", "https://")):
+                            await self.log(f"⚠️ Invalid URL format: {mix_url}", "warning")
                     else:
-                        await self.log(f"⚠️ Supabase upload failed: {result.get('error')}")
+                        error_detail = result.get('error', 'Unknown error')
+                        await self.log(f"⚠️ Supabase upload failed: {error_detail}", "error")
+                        await self.log(f"⚠️ Upload result: {result}", "error")
                         
             except Exception as e:
                 await self.log(f"⚠️ Could not upload to Supabase: {e}")

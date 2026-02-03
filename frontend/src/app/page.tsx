@@ -158,6 +158,23 @@ export default function HomePage() {
         console.log('🎉 Mix generation complete!');
         console.log('Mix URL received:', message.mix_url);
         
+        // Validate URL
+        if (!message.mix_url) {
+          console.error('❌ No mix URL received from backend!');
+          alert('Mix generated but URL is missing. Check backend logs.');
+          setIsRemixing(false);
+          setBotState('error');
+          return;
+        }
+        
+        if (!message.mix_url.startsWith('http')) {
+          console.error('❌ Invalid mix URL format:', message.mix_url);
+          alert('Mix generated but URL format is invalid: ' + message.mix_url);
+          setIsRemixing(false);
+          setBotState('error');
+          return;
+        }
+        
         setMixUrl(message.mix_url);
         setIsRemixing(false);
         setHasRemixed(true);
