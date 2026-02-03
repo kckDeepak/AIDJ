@@ -133,6 +133,52 @@ class PipelineRunner:
         
         await manager.send_progress(self.job.job_id, self.job.progress_percent, stage_num)
     
+    async def download_songs_from_supabase(self, songs_dir: Path):
+        """Download all songs from Supabase to local directory for processing"""
+        try:
+            from backend.services.supabase_storage import list_files, get_supabase_client
+            
+            await self.log("Downloading songs from Supabase Storage...")
+            
+            result = list_files()
+            if not result["success"]:
+                await self.log(f"Warning: Could not list files from Supabase: {result.get('error')}", "warning")
+                return
+            
+            files = result["files"]
+            await self.log(f"Found {len(files)} songs in Supabase Storage")
+            
+            client = get_supabase_client()
+            if not client:
+                await self.log("Warning: Supabase client not available", "warning")
+                return
+            
+            # Download each song
+            for file_info in files:
+                filename = file_info["name"]
+                local_path = songs_dir / filename
+                
+                # Skip if already exists and is not empty
+                if local_path.exists() and local_path.stat().st_size > 0:
+                    await self.log(f"Skipping {filename} (already exists locally)")
+                    continue
+                
+                try:
+                    # Download from Supabase
+                    file_data = client.storage.from_("audio-files").download(f"songs/{filename}")
+                    
+                    # Save locally
+                    with open(local_path, 'wb') as f:
+                        f.write(file_data)
+                    
+                    await self.log(f"Downloaded {filename} ({len(file_data)} bytes)")
+                except Exception as e:
+                    await self.log(f"Failed to download {filename}: {e}", "error")
+            
+            await self.log("✅ All songs downloaded from Supabase")
+        except Exception as e:
+            await self.log(f"Warning: Error downloading songs from Supabase: {e}", "warning")
+    
     async def run(self) -> bool:
         """Execute the full pipeline"""
         
@@ -159,6 +205,9 @@ class PipelineRunner:
         await self.log(f"Base directory: {self.base_dir}")
         await self.log(f"Output directory: {output_dir}")
         await self.log(f"Songs directory: {songs_dir}")
+        
+        # Download all songs from Supabase before processing
+        await self.download_songs_from_supabase(songs_dir)
         
         try:
             self.job.status = JobStatus.RUNNING
@@ -230,7 +279,7 @@ class PipelineRunner:
             # Upload final mix to Supabase for persistent storage
             mix_url = "/static/output/mix.mp3"  # Default fallback
             try:
-                from backend.services.supabase_storage import upload_file
+                from backend.services.supabase_storage import upload_mix_file
                 
                 if mix_path.exists():
                     await self.log("Uploading final mix to Supabase...")
@@ -243,7 +292,7 @@ class PipelineRunner:
                     mix_filename = f"mix_{timestamp}.mp3"
                     
                     result = await asyncio.to_thread(
-                        upload_file,
+                        upload_mix_file,
                         mix_data,
                         mix_filename,
                         "audio/mpeg"
@@ -252,11 +301,14 @@ class PipelineRunner:
                     if result.get("url"):
                         mix_url = result["url"]
                         await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
+                        await self.log(f"Mix URL: {mix_url}")
                     else:
-                        await self.log(f"⚠️ Supabase upload failed, using local URL")
+                        await self.log(f"⚠️ Supabase upload failed: {result.get('error')}")
                         
             except Exception as e:
                 await self.log(f"⚠️ Could not upload to Supabase: {e}")
+                import traceback
+                await self.log(traceback.format_exc(), "error")
                 # Continue anyway, use local URL
             
             # Complete

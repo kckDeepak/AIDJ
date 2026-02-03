@@ -155,6 +155,9 @@ export default function HomePage() {
       } else if (message.type === 'log') {
         setLogs((prev) => [...prev, message.message].slice(-10));
       } else if (message.type === 'complete') {
+        console.log('🎉 Mix generation complete!');
+        console.log('Mix URL received:', message.mix_url);
+        
         setMixUrl(message.mix_url);
         setIsRemixing(false);
         setHasRemixed(true);
@@ -162,30 +165,30 @@ export default function HomePage() {
 
         // Use the custom title or auto-generated name
         const finalTitle = remixTitle.trim() || `Remix ${remixCounter}`;
+        
+        // Create unique ID for this remix
+        const remixId = `remix_${Date.now()}`;
+        
+        console.log('Creating remix song with ID:', remixId);
+        console.log('Remix URL:', message.mix_url);
 
         const remixedSong: Song = {
-          id: 'mix.mp3', // Use actual filename for audio URL
+          id: remixId,
           name: finalTitle,
           bpm: 120,
           key: 'C',
-          file: new File([], 'mix.mp3'),
+          file: new File([], remixId),
           isGenerated: true,
           url: message.mix_url, // Add the Supabase URL from backend
         };
+        
+        console.log('Remix song object:', remixedSong);
         setSongs((prev) => [...prev, remixedSong]);
 
         // Auto-play the remix in GlobalMusicPlayer
         setTimeout(() => {
-          handlePlaySong({
-            id: 'mix.mp3',
-            name: finalTitle,
-            bpm: 120,
-            key: 'C',
-            file: new File([], 'mix.mp3'),
-            isGenerated: true,
-            duration: 0,
-            url: message.mix_url, // Pass the URL for playback
-          });
+          console.log('Auto-playing remix...');
+          handlePlaySong(remixedSong);
         }, 500);
       } else if (message.type === 'error') {
         console.error('Mix generation failed:', message.message);
@@ -273,40 +276,56 @@ export default function HomePage() {
 
     console.log('✅ All uploads complete');
 
-    // Reload song list from Supabase Storage
+    // Reload song list with metadata from backend
     try {
-      console.log('🔄 Reloading songs from Supabase...');
-      const response = await fetch(`${API_BASE_URL}/api/upload/files`);
+      console.log('🔄 Reloading songs with metadata...');
+      const response = await fetch(`${API_BASE_URL}/api/songs`);
       
       console.log('📡 Response status:', response.status);
       
       if (!response.ok) {
-        console.error('❌ Failed to fetch songs from Supabase:', response.status);
-        // Don't clear the songs list on error - keep existing songs
+        console.error('❌ Failed to fetch songs:', response.status);
         return;
       }
 
       const data = await response.json();
       console.log('📦 Received data:', data);
       
-      if (data && data.files && Array.isArray(data.files)) {
-        const loadedSongs: Song[] = data.files.map((file: any) => ({
-          id: file.name,
-          name: file.name.replace('.mp3', ''),
-          bpm: 0, // Will be analyzed later
-          key: 'Unknown',
-          file: new File([], file.name),
-          url: file.url, // Supabase public URL
-        }));
+      if (data && data.songs && Array.isArray(data.songs)) {
+        // Also get file URLs from Supabase
+        let supabaseFiles: any[] = [];
+        try {
+          const supabaseResponse = await fetch(`${API_BASE_URL}/api/upload/files`);
+          if (supabaseResponse.ok) {
+            const supabaseData = await supabaseResponse.json();
+            supabaseFiles = supabaseData.files || [];
+          }
+        } catch (e) {
+          console.warn('Could not fetch Supabase files:', e);
+        }
+
+        const loadedSongs: Song[] = data.songs.map((song: any) => {
+          // Find matching Supabase file for URL
+          const supabaseFile = supabaseFiles.find((f: any) => f.name === song.filename);
+          
+          return {
+            id: song.filename,
+            name: song.title,
+            bpm: song.bpm || 0,
+            key: song.key || 'Unknown',
+            file: new File([], song.filename),
+            url: supabaseFile?.url,
+            duration: song.duration,
+          };
+        });
+        
         setSongs(loadedSongs);
-        console.log('✅ Song list reloaded from Supabase:', loadedSongs.length, 'songs');
+        console.log('✅ Song list reloaded:', loadedSongs.length, 'songs');
       } else {
         console.error('❌ Invalid response format:', data);
-        // Don't clear songs on invalid response
       }
     } catch (error) {
       console.error('❌ Failed to reload songs:', error);
-      // Don't clear songs on error - keep existing songs
     }
   }
 
@@ -389,6 +408,13 @@ export default function HomePage() {
 
   // Music Player Handlers
   function handlePlaySong(song: Song) {
+    console.log('🎵 handlePlaySong called with:', {
+      id: song.id,
+      name: song.name,
+      isGenerated: song.isGenerated,
+      url: song.url,
+    });
+    
     // If same song, just toggle play/pause
     if (currentPlayingSong?.id === song.id) {
       handlePlayPause();
@@ -398,10 +424,24 @@ export default function HomePage() {
     setCurrentPlayingSong(song);
     setPlayerCurrentTime(0);
 
-    // Create audio URL - check if it's a generated remix or regular song
-    const audioUrl = song.isGenerated
-      ? (song.url || `${API_BASE_URL}/static/output/mix.mp3`)  // Use Supabase URL if available
-      : `${API_BASE_URL}/static/songs/${encodeURIComponent(song.id)}`;
+    // Create audio URL - use Supabase URL if available, otherwise fall back to backend
+    let audioUrl: string;
+    
+    if (song.url) {
+      // Use Supabase public URL directly
+      audioUrl = song.url;
+      console.log('✅ Using Supabase URL:', audioUrl);
+    } else if (song.isGenerated) {
+      // Generated mix fallback
+      audioUrl = `${API_BASE_URL}/static/output/mix.mp3`;
+      console.log('⚠️ Using fallback mix URL (no Supabase URL):', audioUrl);
+    } else {
+      // Regular song fallback
+      audioUrl = `${API_BASE_URL}/static/songs/${encodeURIComponent(song.id)}`;
+      console.log('⚠️ Using fallback song URL (no Supabase URL):', audioUrl);
+    }
+    
+    console.log('🔊 Playing audio from:', audioUrl);
 
     // Create or update audio element
     if (audioRef.current) {
@@ -412,6 +452,7 @@ export default function HomePage() {
     audioRef.current = audio;
 
     audio.addEventListener('loadedmetadata', () => {
+      console.log('✅ Audio metadata loaded. Duration:', audio.duration);
       setPlayerDuration(audio.duration);
     });
 
@@ -424,15 +465,24 @@ export default function HomePage() {
     });
 
     audio.addEventListener('error', (e) => {
-      console.error('Audio error:', e);
+      console.error('❌ Audio playback error:', e);
+      console.error('❌ Failed URL:', audioUrl);
+      console.error('❌ Error details:', {
+        code: (e.target as HTMLAudioElement)?.error?.code,
+        message: (e.target as HTMLAudioElement)?.error?.message,
+      });
       setIsAudioPlaying(false);
+      alert(`Failed to play audio. URL: ${audioUrl}\nError: ${(e.target as HTMLAudioElement)?.error?.message || 'Unknown error'}`);
     });
 
     audio.play().then(() => {
+      console.log('✅ Audio playback started');
       setIsAudioPlaying(true);
     }).catch(err => {
-      console.error('Playback failed:', err);
+      console.error('❌ Playback failed:', err);
+      console.error('❌ Failed URL:', audioUrl);
       setIsAudioPlaying(false);
+      alert(`Playback failed: ${err.message}`);
     });
   }
 
@@ -512,11 +562,16 @@ export default function HomePage() {
     try {
       // Check if it's a generated song
       const song = songs.find(s => s.id === filename);
-      const isGenerated = song?.isGenerated || filename === 'mix.mp3';
-
-      const url = isGenerated
-        ? (song?.url || `${API_BASE_URL}/static/output/mix.mp3`)  // Use Supabase URL if available
-        : `${API_BASE_URL}/static/songs/${encodeURIComponent(filename)}`;
+      
+      // Use Supabase URL if available
+      let url: string;
+      if (song?.url) {
+        url = song.url;
+      } else if (song?.isGenerated) {
+        url = `${API_BASE_URL}/static/output/mix.mp3`;
+      } else {
+        url = `${API_BASE_URL}/static/songs/${encodeURIComponent(filename)}`;
+      }
 
       const response = await fetch(url);
       if (response.ok) {
@@ -540,11 +595,12 @@ export default function HomePage() {
     }
   }
 
-  // Load songs from Supabase Storage
+  // Load songs from Supabase Storage and fetch metadata from backend
   useEffect(() => {
     async function loadSongs() {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/upload/files`);
+        // Fetch songs with metadata from backend
+        const response = await fetch(`${API_BASE_URL}/api/songs`);
 
         if (!response.ok) {
           console.error('❌ Failed to fetch songs:', response.status);
@@ -554,24 +610,42 @@ export default function HomePage() {
 
         const data = await response.json();
 
-        // Safety check - ensure data.files exists and is an array
-        if (!data || !data.files || !Array.isArray(data.files)) {
+        // Safety check - ensure data.songs exists and is an array
+        if (!data || !data.songs || !Array.isArray(data.songs)) {
           console.error('❌ Invalid songs response:', data);
           setSongs([]);
           return;
         }
 
-        const loadedSongs: Song[] = data.files.map((file: any) => ({
-          id: file.name,
-          name: file.name.replace('.mp3', ''),
-          bpm: 0, // Will be analyzed later
-          key: 'Unknown',
-          file: new File([], file.name),
-          url: file.url, // Supabase public URL
-        }));
+        // Also get file URLs from Supabase
+        let supabaseFiles: any[] = [];
+        try {
+          const supabaseResponse = await fetch(`${API_BASE_URL}/api/upload/files`);
+          if (supabaseResponse.ok) {
+            const supabaseData = await supabaseResponse.json();
+            supabaseFiles = supabaseData.files || [];
+          }
+        } catch (e) {
+          console.warn('Could not fetch Supabase files:', e);
+        }
+
+        const loadedSongs: Song[] = data.songs.map((song: any) => {
+          // Find matching Supabase file for URL
+          const supabaseFile = supabaseFiles.find((f: any) => f.name === song.filename);
+          
+          return {
+            id: song.filename,
+            name: song.title,
+            bpm: song.bpm || 0,
+            key: song.key || 'Unknown',
+            file: new File([], song.filename),
+            url: supabaseFile?.url, // Supabase public URL
+            duration: song.duration,
+          };
+        });
 
         setSongs(loadedSongs);
-        console.log(`✅ Loaded ${loadedSongs.length} songs from Supabase Storage`);
+        console.log(`✅ Loaded ${loadedSongs.length} songs with metadata`);
       } catch (error) {
         console.error('❌ Failed to load songs:', error);
         setSongs([]); // Set empty array on error

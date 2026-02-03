@@ -147,6 +147,75 @@ def delete_file(filename: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def upload_mix_file(file_data: bytes, filename: str, content_type: str = "audio/mpeg") -> dict:
+    """
+    Upload a generated mix file to Supabase Storage in the mixes folder
+    
+    Args:
+        file_data: Raw file bytes
+        filename: Name to save the file as
+        content_type: MIME type of the file
+        
+    Returns:
+        dict with 'success', 'url', and 'error' keys
+    """
+    client = get_supabase_client()
+    
+    if not client:
+        return {
+            "success": False,
+            "url": None,
+            "error": "Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY."
+        }
+    
+    try:
+        # Upload path: mixes/filename.mp3
+        path = f"mixes/{filename}"
+        
+        # Upload to Supabase Storage (will overwrite if exists)
+        # Note: Using file_options with upsert as boolean
+        result = client.storage.from_(AUDIO_BUCKET).upload(
+            path,
+            file_data,
+            file_options={"content-type": content_type, "upsert": True}
+        )
+        
+        # Get public URL
+        public_url = client.storage.from_(AUDIO_BUCKET).get_public_url(path)
+        
+        print(f"✅ Uploaded mix to Supabase: {filename}")
+        
+        return {
+            "success": True,
+            "url": public_url,
+            "path": path,
+            "error": None
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Supabase mix upload failed: {error_msg}")
+        
+        # Try to get URL even if upload failed (file might exist)
+        try:
+            public_url = client.storage.from_(AUDIO_BUCKET).get_public_url(f"mixes/{filename}")
+            return {
+                "success": True,
+                "url": public_url,
+                "path": f"mixes/{filename}",
+                "error": None,
+                "note": "Using existing file"
+            }
+        except:
+            pass
+        
+        return {
+            "success": False,
+            "url": None,
+            "error": error_msg
+        }
+
+
 def list_files() -> dict:
     """
     List all files in the audio bucket

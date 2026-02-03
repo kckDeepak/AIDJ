@@ -129,26 +129,53 @@ def generate_waveform_data(filepath: Path, num_points: int = 100) -> List[float]
 
 @router.get("", response_model=SongListResponse)
 async def list_songs():
-    """List all songs with metadata"""
+    """List all songs with metadata from both Supabase and local cache"""
+    from backend.services.supabase_storage import list_files
+    
     songs = []
     
-    for mp3_file in SONGS_DIR.glob("*.mp3"):
-        artist, title = parse_filename(mp3_file.name)
-        
-        # Load cached metadata if available
-        cached = load_cached_metadata(mp3_file.name)
-        
-        song = SongMetadata(
-            filename=mp3_file.name,
-            title=title,
-            artist=artist,
-            bpm=cached.get("bpm") if cached else None,
-            key=cached.get("key") if cached else None,
-            genre=cached.get("genre") if cached else None,
-            energy=cached.get("energy") if cached else None,
-            duration=cached.get("duration") if cached else None
-        )
-        songs.append(song)
+    # Get files from Supabase Storage
+    supabase_result = list_files()
+    
+    if supabase_result.get("success") and supabase_result.get("files"):
+        # Process songs from Supabase
+        for file_info in supabase_result["files"]:
+            filename = file_info["name"]
+            artist, title = parse_filename(filename)
+            
+            # Load cached metadata if available
+            cached = load_cached_metadata(filename)
+            
+            song = SongMetadata(
+                filename=filename,
+                title=title,
+                artist=artist,
+                bpm=cached.get("bpm") if cached else None,
+                key=cached.get("key") if cached else None,
+                genre=cached.get("genre") if cached else None,
+                energy=cached.get("energy") if cached else None,
+                duration=cached.get("duration") if cached else None
+            )
+            songs.append(song)
+    else:
+        # Fallback to local directory scan
+        for mp3_file in SONGS_DIR.glob("*.mp3"):
+            artist, title = parse_filename(mp3_file.name)
+            
+            # Load cached metadata if available
+            cached = load_cached_metadata(mp3_file.name)
+            
+            song = SongMetadata(
+                filename=mp3_file.name,
+                title=title,
+                artist=artist,
+                bpm=cached.get("bpm") if cached else None,
+                key=cached.get("key") if cached else None,
+                genre=cached.get("genre") if cached else None,
+                energy=cached.get("energy") if cached else None,
+                duration=cached.get("duration") if cached else None
+            )
+            songs.append(song)
     
     # Sort by title
     songs.sort(key=lambda s: s.title.lower())
