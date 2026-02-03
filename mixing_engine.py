@@ -1241,6 +1241,14 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
                 structure_json: str = "output/structure_data.json",
                 output_path: str = "output/mix.mp3"):
     print("Loading data...")
+    
+    # Validate input files exist
+    if not os.path.exists(mixing_plan_json):
+        raise FileNotFoundError(f"Mixing plan not found: {mixing_plan_json}")
+    
+    if not os.path.exists(structure_json):
+        raise FileNotFoundError(f"Structure data not found: {structure_json}")
+    
     with open(mixing_plan_json, "r", encoding="utf-8") as f:
         plan = json.load(f).get("mixing_plan", [])
     with open(structure_json, "r", encoding="utf-8") as f:
@@ -1252,8 +1260,7 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
             tracks_db[track["title"]] = track
 
     if not plan:
-        print("No mixing plan found!")
-        return
+        raise ValueError("Mixing plan is empty! No tracks to mix.")
 
     mix = AudioSegment.empty()
     previous_track_audio = None
@@ -1452,10 +1459,32 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
 
     print("\n" + "="*60)
     print("Normalizing & exporting final mix...")
+    
+    # Verify we have audio to export
+    if len(mix) == 0:
+        raise ValueError("Mix is empty! No audio was generated. Check that songs were properly mixed.")
+    
+    print(f"Mix duration: {len(mix)/60000:.1f} minutes")
+    
     final_mix = normalize(mix)
+    
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
     final_mix.export(output_path, format="mp3", bitrate="320k",
                      tags={"artist":"AI DJ","title":"Full-Auto Chorus Mix"})
-    print(f"✅ MIX READY → {output_path} ({len(final_mix)/60000:.1f} minutes)")
+    
+    # Verify file was created
+    if not os.path.exists(output_path):
+        raise IOError(f"Failed to create output file: {output_path}")
+    
+    file_size = os.path.getsize(output_path)
+    if file_size == 0:
+        raise IOError(f"Output file created but is empty: {output_path}")
+    
+    print(f"✅ MIX READY → {output_path} ({len(final_mix)/60000:.1f} minutes, {file_size/1024/1024:.1f} MB)")
     print("="*60)
 
 if __name__ == "__main__":
