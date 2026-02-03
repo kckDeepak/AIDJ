@@ -348,12 +348,9 @@ class PipelineRunner:
             await self.log(f"Mix generation complete! 🎧 ({file_size / 1024 / 1024:.2f} MB)")
             
             # Upload final mix to Supabase for persistent storage
-            mix_url = None
-            supabase_success = False
+            from backend.services.supabase_storage import upload_mix_file
             
             try:
-                from backend.services.supabase_storage import upload_mix_file
-                
                 if not mix_path.exists():
                     raise Exception(f"Mix file not found at {mix_path}")
                 
@@ -379,39 +376,26 @@ class PipelineRunner:
                     "audio/mpeg"
                 )
                 
-                if result.get("success") and result.get("url"):
-                    mix_url = result["url"]
-                    supabase_success = True
-                    await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
-                    await self.log(f"🔗 Mix URL: {mix_url}")
-                else:
+                if not result.get("success") or not result.get("url"):
                     error_detail = result.get('error', 'Unknown error')
-                    await self.log(f"⚠️ Supabase upload failed: {error_detail}", "warning")
+                    raise Exception(f"Supabase upload failed: {error_detail}")
+                
+                mix_url = result["url"]
+                await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
+                await self.log(f"🔗 Mix URL: {mix_url}")
                         
             except Exception as e:
-                await self.log(f"⚠️ Upload error: {e}", "warning")
+                error_msg = f"Mix created but Supabase upload failed: {str(e)}"
+                await self.log(error_msg, "error")
                 import traceback
                 await self.log(traceback.format_exc(), "error")
-            
-            # If Supabase failed, use backend static URL as fallback
-            if not supabase_success or not mix_url:
-                await self.log("⚠️ Supabase unavailable - using backend static URL as fallback", "warning")
                 
-                # Copy mix.mp3 to a static name for serving
-                static_mix_path = output_dir / "mix.mp3"
-                try:
-                    import shutil
-                    shutil.copy2(mix_path, static_mix_path)
-                    await self.log(f"📋 Copied mix to static path: {static_mix_path}")
-                except Exception as copy_error:
-                    await self.log(f"⚠️ Failed to copy mix: {copy_error}", "warning")
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
                 
-                # Determine backend URL from environment
-                backend_url = os.environ.get('BACKEND_URL', 'https://aidj-backend.onrender.com')
-                mix_url = f"{backend_url}/static/output/mix.mp3"
-                
-                await self.log(f"🔗 Fallback mix URL: {mix_url}")
-                await self.log("⚠️ Note: This URL may not persist after restart", "warning")
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
             
             # Complete
             self.job.status = JobStatus.COMPLETE

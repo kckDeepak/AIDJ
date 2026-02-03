@@ -441,24 +441,15 @@ export default function HomePage() {
     setCurrentPlayingSong(song);
     setPlayerCurrentTime(0);
 
-    // Create audio URL - use Supabase URL if available, otherwise fall back to backend
-    let audioUrl: string;
-    
-    if (song.url) {
-      // Use Supabase public URL directly
-      audioUrl = song.url;
-      console.log('✅ Using Supabase URL:', audioUrl);
-    } else if (song.isGenerated) {
-      // Generated mix fallback
-      audioUrl = `${API_BASE_URL}/static/output/mix.mp3`;
-      console.log('⚠️ Using fallback mix URL (no Supabase URL):', audioUrl);
-    } else {
-      // Regular song fallback
-      audioUrl = `${API_BASE_URL}/static/songs/${encodeURIComponent(song.id)}`;
-      console.log('⚠️ Using fallback song URL (no Supabase URL):', audioUrl);
+    // Validate that we have a Supabase URL
+    if (!song.url) {
+      console.error('❌ No Supabase URL available for song:', song.name);
+      alert('Failed to play: Song URL not available');
+      return;
     }
-    
-    console.log('🔊 Playing audio from:', audioUrl);
+
+    const audioUrl = song.url;
+    console.log('🔊 Playing audio from Supabase:', audioUrl);
 
     // Create or update audio element
     if (audioRef.current) {
@@ -580,15 +571,13 @@ export default function HomePage() {
       // Check if it's a generated song
       const song = songs.find(s => s.id === filename);
       
-      // Use Supabase URL if available
-      let url: string;
-      if (song?.url) {
-        url = song.url;
-      } else if (song?.isGenerated) {
-        url = `${API_BASE_URL}/static/output/mix.mp3`;
-      } else {
-        url = `${API_BASE_URL}/static/songs/${encodeURIComponent(filename)}`;
+      // Require Supabase URL
+      if (!song?.url) {
+        alert('Download failed: Song URL not available');
+        return;
       }
+      
+      const url = song.url;
 
       const response = await fetch(url);
       if (response.ok) {
