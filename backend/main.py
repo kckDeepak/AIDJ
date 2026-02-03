@@ -13,9 +13,10 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
 
 # Add parent directory to path for importing existing modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -84,6 +85,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # Expose all headers for audio playback
 )
 
 # Mount static directories for serving audio files
@@ -101,6 +103,31 @@ print("   - /api/mix/* (mix)")
 print("   - /upload-audio (upload)")
 print("   - /api/upload/files (list)")
 print("   - /api/upload/{filename} (delete)")
+
+
+@app.get("/static/output/mix.mp3")
+async def serve_mix():
+    """Serve generated mix with proper audio headers and CORS"""
+    mix_file = OUTPUT_DIR / "mix.mp3"
+    
+    if not mix_file.exists():
+        return Response(
+            content="Mix not found. Generate a mix first.",
+            status_code=404,
+            media_type="text/plain"
+        )
+    
+    return FileResponse(
+        path=str(mix_file),
+        media_type="audio/mpeg",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Cache-Control": "no-cache",
+        }
+    )
 
 
 @app.get("/")

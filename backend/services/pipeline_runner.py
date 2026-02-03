@@ -253,12 +253,39 @@ class PipelineRunner:
             await self.update_stage(4, "running")
             await self.log("Generating professional mixing plan...")
             
-            await asyncio.to_thread(
-                generate_mixing_plan,
-                basic_setlist_path=str(output_dir / "basic_setlist.json"),
-                structure_json_path=str(output_dir / "structure_data.json"),
-                output_path=str(output_dir / "mixing_plan.json")
-            )
+            try:
+                await asyncio.to_thread(
+                    generate_mixing_plan,
+                    basic_setlist_path=str(output_dir / "basic_setlist.json"),
+                    structure_json_path=str(output_dir / "structure_data.json"),
+                    output_path=str(output_dir / "mixing_plan.json")
+                )
+            except Exception as plan_error:
+                error_msg = f"Mixing plan generation failed: {str(plan_error)}"
+                await self.log(error_msg, "error")
+                import traceback
+                await self.log(traceback.format_exc(), "error")
+                
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
+                
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
+            
+            # Verify mixing plan was created
+            mixing_plan_path = output_dir / "mixing_plan.json"
+            if not mixing_plan_path.exists():
+                error_msg = "Mixing plan file was not created"
+                await self.log(error_msg, "error")
+                
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
+                
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
+                
             await self.update_stage(4, "complete")
             await self.log("Mixing plan ready ✓")
             
@@ -267,14 +294,58 @@ class PipelineRunner:
             await self.log("Creating final audio mix... This may take a few minutes.")
             
             mix_path = output_dir / "mix.mp3"
-            await asyncio.to_thread(
-                generate_mix,
-                mixing_plan_json=str(output_dir / "mixing_plan.json"),
-                structure_json=str(output_dir / "structure_data.json"),
-                output_path=str(mix_path)
-            )
+            
+            # Remove old mix if exists
+            if mix_path.exists():
+                mix_path.unlink()
+                await self.log("Removed old mix file")
+            
+            try:
+                await asyncio.to_thread(
+                    generate_mix,
+                    mixing_plan_json=str(output_dir / "mixing_plan.json"),
+                    structure_json=str(output_dir / "structure_data.json"),
+                    output_path=str(mix_path)
+                )
+            except Exception as mix_error:
+                error_msg = f"Mix generation failed: {str(mix_error)}"
+                await self.log(error_msg, "error")
+                import traceback
+                await self.log(traceback.format_exc(), "error")
+                
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
+                
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
+            
+            # Verify mix was actually created
+            if not mix_path.exists():
+                error_msg = "Mix generation reported success but file was not created"
+                await self.log(error_msg, "error")
+                
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
+                
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
+            
+            file_size = mix_path.stat().st_size
+            if file_size == 0:
+                error_msg = "Mix file was created but is empty (0 bytes)"
+                await self.log(error_msg, "error")
+                
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
+                
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
+            
             await self.update_stage(5, "complete")
-            await self.log("Mix generation complete! 🎧")
+            await self.log(f"Mix generation complete! 🎧 ({file_size / 1024 / 1024:.2f} MB)")
             
             # Upload final mix to Supabase for persistent storage
             mix_url = None
@@ -325,6 +396,15 @@ class PipelineRunner:
             # If Supabase failed, use backend static URL as fallback
             if not supabase_success or not mix_url:
                 await self.log("⚠️ Supabase unavailable - using backend static URL as fallback", "warning")
+                
+                # Copy mix.mp3 to a static name for serving
+                static_mix_path = output_dir / "mix.mp3"
+                try:
+                    import shutil
+                    shutil.copy2(mix_path, static_mix_path)
+                    await self.log(f"📋 Copied mix to static path: {static_mix_path}")
+                except Exception as copy_error:
+                    await self.log(f"⚠️ Failed to copy mix: {copy_error}", "warning")
                 
                 # Determine backend URL from environment
                 backend_url = os.environ.get('BACKEND_URL', 'https://aidj-backend.onrender.com')
