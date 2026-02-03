@@ -277,45 +277,62 @@ class PipelineRunner:
             await self.log("Mix generation complete! 🎧")
             
             # Upload final mix to Supabase for persistent storage
-            mix_url = "/static/output/mix.mp3"  # Default fallback
+            mix_url = None
+            supabase_success = False
+            
             try:
                 from backend.services.supabase_storage import upload_mix_file
                 
-                if mix_path.exists():
-                    await self.log("Uploading final mix to Supabase...")
-                    
-                    with open(mix_path, "rb") as f:
-                        mix_data = f.read()
-                    
-                    # Upload with timestamp to avoid conflicts
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    mix_filename = f"mix_{timestamp}.mp3"
-                    
-                    result = await asyncio.to_thread(
-                        upload_mix_file,
-                        mix_data,
-                        mix_filename,
-                        "audio/mpeg"
-                    )
-                    
-                    if result.get("url"):
-                        mix_url = result["url"]
-                        await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
-                        await self.log(f"🔗 Mix URL: {mix_url}")
-                        
-                        # Validate URL format
-                        if not mix_url.startswith(("http://", "https://")):
-                            await self.log(f"⚠️ Invalid URL format: {mix_url}", "warning")
-                    else:
-                        error_detail = result.get('error', 'Unknown error')
-                        await self.log(f"⚠️ Supabase upload failed: {error_detail}", "error")
-                        await self.log(f"⚠️ Upload result: {result}", "error")
+                if not mix_path.exists():
+                    raise Exception(f"Mix file not found at {mix_path}")
+                
+                file_size = mix_path.stat().st_size
+                await self.log(f"📦 Mix file size: {file_size / 1024 / 1024:.2f} MB")
+                
+                if file_size == 0:
+                    raise Exception("Mix file is empty (0 bytes)")
+                
+                await self.log("📤 Uploading final mix to Supabase...")
+                
+                with open(mix_path, "rb") as f:
+                    mix_data = f.read()
+                
+                # Upload with timestamp to avoid conflicts
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                mix_filename = f"mix_{timestamp}.mp3"
+                
+                result = await asyncio.to_thread(
+                    upload_mix_file,
+                    mix_data,
+                    mix_filename,
+                    "audio/mpeg"
+                )
+                
+                if result.get("success") and result.get("url"):
+                    mix_url = result["url"]
+                    supabase_success = True
+                    await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
+                    await self.log(f"🔗 Mix URL: {mix_url}")
+                else:
+                    error_detail = result.get('error', 'Unknown error')
+                    await self.log(f"❌ Supabase upload failed: {error_detail}", "error")
                         
             except Exception as e:
-                await self.log(f"⚠️ Could not upload to Supabase: {e}")
+                await self.log(f"❌ Upload error: {e}", "error")
                 import traceback
                 await self.log(traceback.format_exc(), "error")
-                # Continue anyway, use local URL
+            
+            # Fail if upload didn't work
+            if not supabase_success or not mix_url:
+                error_msg = "Mix created but Supabase upload failed. Check: 1) Supabase credentials 2) Bucket exists 3) Public read policy enabled"
+                await self.log(f"❌ {error_msg}", "error")
+                
+                self.job.status = JobStatus.FAILED
+                self.job.error = error_msg
+                self.job.completed_at = datetime.now()
+                
+                await manager.send_error(self.job.job_id, error_msg)
+                return False
             
             # Complete
             self.job.status = JobStatus.COMPLETE

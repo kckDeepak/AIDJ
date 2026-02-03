@@ -222,10 +222,14 @@ def upload_mix_file(file_data: bytes, filename: str, content_type: str = "audio/
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Supabase mix upload failed: {error_msg}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         
         # Try to get URL even if upload failed (file might exist)
         try:
             public_url = client.storage.from_(AUDIO_BUCKET).get_public_url(f"songs/{filename}")
+            print(f"ℹ️ Returning existing file URL: {public_url}")
             return {
                 "success": True,
                 "url": public_url,
@@ -233,8 +237,8 @@ def upload_mix_file(file_data: bytes, filename: str, content_type: str = "audio/
                 "error": None,
                 "note": "Using existing file"
             }
-        except:
-            pass
+        except Exception as fallback_error:
+            print(f"❌ Could not get fallback URL: {fallback_error}")
         
         return {
             "success": False,
