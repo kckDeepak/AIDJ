@@ -24,13 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from backend.routers import songs, mix, upload
 from backend.services.websocket_manager import manager
 
-# Paths - detect base directory properly for both local and Render
-import os
+# Paths - detect base directory
 cwd = Path.cwd()
-if os.environ.get('RENDER'):
-    # On Render, use the project src directory
-    BASE_DIR = Path('/opt/render/project/src')
-elif (cwd / 'songs').exists():
+if (cwd / 'songs').exists():
     BASE_DIR = cwd
 elif (cwd.parent / 'songs').exists():
     BASE_DIR = cwd.parent
@@ -95,7 +91,7 @@ app.mount("/static/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output
 # Include routers
 app.include_router(songs.router, prefix="/api/songs", tags=["Songs"])
 app.include_router(mix.router, prefix="/api/mix", tags=["Mix Generation"])
-app.include_router(upload.router)  # Supabase Storage - POST /upload-audio
+app.include_router(upload.router)  # Local Storage - POST /upload-audio
 
 print("✅ Routers registered:")
 print("   - /api/songs/* (songs)")

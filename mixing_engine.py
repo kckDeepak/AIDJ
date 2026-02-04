@@ -32,7 +32,10 @@ except ImportError as e:
     print(f"Warning: Waveform visualization disabled - {e}")
     VISUALIZATION_ENABLED = False
 
-SONGS_DIR = "./songs"
+# Use absolute paths based on script location
+from pathlib import Path
+_SCRIPT_DIR = Path(__file__).parent
+SONGS_DIR = str(_SCRIPT_DIR / "songs")
 
 # ================= GENRE-SPECIFIC DJ MIXING RULES =================
 GENRE_MIXING_RULES = {

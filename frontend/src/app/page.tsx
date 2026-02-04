@@ -31,7 +31,7 @@ interface Song {
   file: File;
   isGenerated?: boolean;
   duration?: number;
-  url?: string;  // Public URL from Supabase Storage
+  url?: string;  // URL for audio playback
 }
 
 interface PipelineStage {
@@ -167,15 +167,14 @@ export default function HomePage() {
           return;
         }
         
+        // Convert relative URL to absolute URL
+        let fullMixUrl = message.mix_url;
         if (!message.mix_url.startsWith('http')) {
-          console.error('❌ Invalid mix URL format:', message.mix_url);
-          alert('Mix generated but URL format is invalid: ' + message.mix_url);
-          setIsRemixing(false);
-          setBotState('error');
-          return;
+          fullMixUrl = `${API_BASE_URL}${message.mix_url}`;
         }
+        console.log('Full mix URL:', fullMixUrl);
         
-        setMixUrl(message.mix_url);
+        setMixUrl(fullMixUrl);
         setIsRemixing(false);
         setHasRemixed(true);
         setWorkflowState('complete');
@@ -187,7 +186,7 @@ export default function HomePage() {
         const remixId = `remix_${Date.now()}`;
         
         console.log('Creating remix song with ID:', remixId);
-        console.log('Remix URL:', message.mix_url);
+        console.log('Remix URL:', fullMixUrl);
 
         const remixedSong: Song = {
           id: remixId,
@@ -196,7 +195,7 @@ export default function HomePage() {
           key: 'C',
           file: new File([], remixId),
           isGenerated: true,
-          url: message.mix_url, // Add the Supabase URL from backend
+          url: fullMixUrl,
         };
         
         console.log('Remix song object:', remixedSong);
@@ -232,19 +231,14 @@ export default function HomePage() {
   }, [currentJobId]);
 
 
-  // File upload - Upload to Supabase Storage via Backend API
-  // ARCHITECTURE: Frontend → Backend (Render) → Supabase Storage
-  // This keeps Supabase credentials secure on the backend
+  // File upload - Upload to local storage via Backend API
   async function handleFileUpload(files: FileList | null) {
     if (!files || files.length === 0) {
       console.log('No files selected');
       return;
     }
 
-    console.log(`Uploading ${files.length} file(s) to Supabase Storage via backend`);
-
-    // Dynamic import to avoid SSR issues
-    const { uploadToSupabase } = await import('@/lib/supabaseUpload');
+    console.log(`Uploading ${files.length} file(s) to backend`);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -252,7 +246,7 @@ export default function HomePage() {
       try {
         console.log(`[${i + 1}/${files.length}] Processing: ${file.name}`);
 
-        // Validate file (50MB max for Supabase)
+        // Validate file
         if (!file.name.toLowerCase().endsWith('.mp3')) {
           alert(`❌ ${file.name}: Only MP3 files are allowed`);
           continue;
@@ -264,14 +258,23 @@ export default function HomePage() {
           continue;
         }
 
-        // Upload to Supabase Storage via backend
-        console.log('📤 Uploading to Supabase Storage...');
-        const uploadResult = await uploadToSupabase(file, (progress) => {
-          console.log(`Upload progress: ${progress.percent.toFixed(1)}%`);
-          // TODO: Show progress UI (future enhancement)
+        // Upload to backend
+        console.log('📤 Uploading to backend...');
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${API_BASE_URL}/upload-audio`, {
+          method: 'POST',
+          body: formData,
         });
 
-        console.log('✅ Supabase upload complete. URL:', uploadResult.url);
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Upload failed');
+        }
+
+        const uploadResult = await response.json();
+        console.log('✅ Upload complete. URL:', uploadResult.url);
 
         // Add to local state
         const newSong: Song = {
@@ -279,12 +282,12 @@ export default function HomePage() {
           name: uploadResult.filename.replace('.mp3', ''),
           bpm: 0,
           key: 'Unknown',
-          file, // Keep File object for backward compatibility
-          url: uploadResult.url, // Store Supabase URL
+          file,
+          url: `${API_BASE_URL}${uploadResult.url}`,
         };
         setSongs((prev) => [...prev, newSong]);
 
-        alert(`✅ Successfully uploaded: ${file.name}`);
+        console.log(`✅ Successfully uploaded: ${file.name}`);
       } catch (error) {
         console.error('❌ Upload error:', error);
         alert(`❌ Upload failed for ${file.name}: ${error}`);
@@ -298,48 +301,26 @@ export default function HomePage() {
       console.log('🔄 Reloading songs with metadata...');
       const response = await fetch(`${API_BASE_URL}/api/songs`);
       
-      console.log('📡 Response status:', response.status);
-      
       if (!response.ok) {
         console.error('❌ Failed to fetch songs:', response.status);
         return;
       }
 
       const data = await response.json();
-      console.log('📦 Received data:', data);
       
       if (data && data.songs && Array.isArray(data.songs)) {
-        // Also get file URLs from Supabase
-        let supabaseFiles: any[] = [];
-        try {
-          const supabaseResponse = await fetch(`${API_BASE_URL}/api/upload/files`);
-          if (supabaseResponse.ok) {
-            const supabaseData = await supabaseResponse.json();
-            supabaseFiles = supabaseData.files || [];
-          }
-        } catch (e) {
-          console.warn('Could not fetch Supabase files:', e);
-        }
-
-        const loadedSongs: Song[] = data.songs.map((song: any) => {
-          // Find matching Supabase file for URL
-          const supabaseFile = supabaseFiles.find((f: any) => f.name === song.filename);
-          
-          return {
-            id: song.filename,
-            name: song.title,
-            bpm: song.bpm || 0,
-            key: song.key || 'Unknown',
-            file: new File([], song.filename),
-            url: supabaseFile?.url,
-            duration: song.duration,
-          };
-        });
+        const loadedSongs: Song[] = data.songs.map((song: any) => ({
+          id: song.filename,
+          name: song.title,
+          bpm: song.bpm || 0,
+          key: song.key || 'Unknown',
+          file: new File([], song.filename),
+          url: `${API_BASE_URL}/static/songs/${song.filename}`,
+          duration: song.duration,
+        }));
         
         setSongs(loadedSongs);
         console.log('✅ Song list reloaded:', loadedSongs.length, 'songs');
-      } else {
-        console.error('❌ Invalid response format:', data);
       }
     } catch (error) {
       console.error('❌ Failed to reload songs:', error);
@@ -441,15 +422,15 @@ export default function HomePage() {
     setCurrentPlayingSong(song);
     setPlayerCurrentTime(0);
 
-    // Validate that we have a Supabase URL
+    // Validate that we have a URL
     if (!song.url) {
-      console.error('❌ No Supabase URL available for song:', song.name);
+      console.error('❌ No URL available for song:', song.name);
       alert('Failed to play: Song URL not available');
       return;
     }
 
     const audioUrl = song.url;
-    console.log('🔊 Playing audio from Supabase:', audioUrl);
+    console.log('🔊 Playing audio from:', audioUrl);
 
     // Create or update audio element
     if (audioRef.current) {
@@ -571,7 +552,7 @@ export default function HomePage() {
       // Check if it's a generated song
       const song = songs.find(s => s.id === filename);
       
-      // Require Supabase URL
+      // Require URL
       if (!song?.url) {
         alert('Download failed: Song URL not available');
         return;
@@ -601,7 +582,7 @@ export default function HomePage() {
     }
   }
 
-  // Load songs from Supabase Storage and fetch metadata from backend
+  // Load songs from backend
   useEffect(() => {
     async function loadSongs() {
       try {
@@ -623,32 +604,15 @@ export default function HomePage() {
           return;
         }
 
-        // Also get file URLs from Supabase
-        let supabaseFiles: any[] = [];
-        try {
-          const supabaseResponse = await fetch(`${API_BASE_URL}/api/upload/files`);
-          if (supabaseResponse.ok) {
-            const supabaseData = await supabaseResponse.json();
-            supabaseFiles = supabaseData.files || [];
-          }
-        } catch (e) {
-          console.warn('Could not fetch Supabase files:', e);
-        }
-
-        const loadedSongs: Song[] = data.songs.map((song: any) => {
-          // Find matching Supabase file for URL
-          const supabaseFile = supabaseFiles.find((f: any) => f.name === song.filename);
-          
-          return {
-            id: song.filename,
-            name: song.title,
-            bpm: song.bpm || 0,
-            key: song.key || 'Unknown',
-            file: new File([], song.filename),
-            url: supabaseFile?.url, // Supabase public URL
-            duration: song.duration,
-          };
-        });
+        const loadedSongs: Song[] = data.songs.map((song: any) => ({
+          id: song.filename,
+          name: song.title,
+          bpm: song.bpm || 0,
+          key: song.key || 'Unknown',
+          file: new File([], song.filename),
+          url: `${API_BASE_URL}/static/songs/${song.filename}`,
+          duration: song.duration,
+        }));
 
         setSongs(loadedSongs);
         console.log(`✅ Loaded ${loadedSongs.length} songs with metadata`);

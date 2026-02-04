@@ -129,53 +129,30 @@ def generate_waveform_data(filepath: Path, num_points: int = 100) -> List[float]
 
 @router.get("", response_model=SongListResponse)
 async def list_songs():
-    """List all songs with metadata from both Supabase and local cache"""
-    from backend.services.supabase_storage import list_files
-    
+    """List all songs with metadata from local storage"""
     songs = []
     
-    # Get files from Supabase Storage
-    supabase_result = list_files()
+    # Ensure songs directory exists
+    SONGS_DIR.mkdir(parents=True, exist_ok=True)
     
-    if supabase_result.get("success") and supabase_result.get("files"):
-        # Process songs from Supabase
-        for file_info in supabase_result["files"]:
-            filename = file_info["name"]
-            artist, title = parse_filename(filename)
-            
-            # Load cached metadata if available
-            cached = load_cached_metadata(filename)
-            
-            song = SongMetadata(
-                filename=filename,
-                title=title,
-                artist=artist,
-                bpm=cached.get("bpm") if cached else None,
-                key=cached.get("key") if cached else None,
-                genre=cached.get("genre") if cached else None,
-                energy=cached.get("energy") if cached else None,
-                duration=cached.get("duration") if cached else None
-            )
-            songs.append(song)
-    else:
-        # Fallback to local directory scan
-        for mp3_file in SONGS_DIR.glob("*.mp3"):
-            artist, title = parse_filename(mp3_file.name)
-            
-            # Load cached metadata if available
-            cached = load_cached_metadata(mp3_file.name)
-            
-            song = SongMetadata(
-                filename=mp3_file.name,
-                title=title,
-                artist=artist,
-                bpm=cached.get("bpm") if cached else None,
-                key=cached.get("key") if cached else None,
-                genre=cached.get("genre") if cached else None,
-                energy=cached.get("energy") if cached else None,
-                duration=cached.get("duration") if cached else None
-            )
-            songs.append(song)
+    # Scan local directory for MP3 files
+    for mp3_file in SONGS_DIR.glob("*.mp3"):
+        artist, title = parse_filename(mp3_file.name)
+        
+        # Load cached metadata if available
+        cached = load_cached_metadata(mp3_file.name)
+        
+        song = SongMetadata(
+            filename=mp3_file.name,
+            title=title,
+            artist=artist,
+            bpm=cached.get("bpm") if cached else None,
+            key=cached.get("key") if cached else None,
+            genre=cached.get("genre") if cached else None,
+            energy=cached.get("energy") if cached else None,
+            duration=cached.get("duration") if cached else None
+        )
+        songs.append(song)
     
     # Sort by title
     songs.sort(key=lambda s: s.title.lower())
@@ -312,29 +289,16 @@ async def rename_song(filename: str, new_name: str):
 
 @router.delete("/{filename}")
 async def delete_song(filename: str):
-    """Delete a song from both local storage and Supabase"""
-    from backend.services.supabase_storage import delete_file
-    
+    """Delete a song from local storage"""
     filepath = SONGS_DIR / filename
     
-    # Track errors but don't fail if one deletion fails
-    errors = []
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail=f"Song not found: {filename}")
     
     try:
-        # Delete from Supabase Storage
-        result = delete_file(filename)
-        if not result.get("success"):
-            errors.append(f"Supabase: {result.get('error')}")
-        else:
-            print(f"✅ Deleted from Supabase: {filename}")
-    except Exception as e:
-        errors.append(f"Supabase: {str(e)}")
-    
-    try:
-        # Delete local file if exists
-        if filepath.exists():
-            filepath.unlink()
-            print(f"✅ Deleted locally: {filename}")
+        # Delete local file
+        filepath.unlink()
+        print(f"✅ Deleted: {filename}")
         
         # Delete cached metadata if exists
         cache_name = Path(filename).stem.replace(" ", "_").lower()
@@ -343,11 +307,6 @@ async def delete_song(filename: str):
             if cache_path.exists():
                 cache_path.unlink()
         
-    except Exception as e:
-        errors.append(f"Local: {str(e)}")
-    
-    # Return success if at least Supabase deletion worked (local is ephemeral anyway)
-    if "Supabase:" not in str(errors) or not errors:
         return {"success": True, "message": f"Deleted {filename}"}
-    else:
-        raise HTTPException(status_code=500, detail=f"Delete failed: {'; '.join(errors)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")

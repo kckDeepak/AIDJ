@@ -1,31 +1,27 @@
 """
-Upload Router - Supabase Storage Upload API
-============================================
+Upload Router - Local Storage Upload API
+=========================================
 
-This is the ONLY file storage solution for this project.
-Firebase Storage has been completely removed.
-
-Architecture:
-- Frontend uploads files to backend API
-- Backend uploads to Supabase Storage using service_role key
-- Backend returns public URL to frontend
-- Frontend uses URL to play audio
-
-This keeps Supabase credentials secure on the backend.
+Simple file upload that saves MP3 files directly to the local songs/ folder.
 
 Endpoints:
-- POST /upload-audio - Upload MP3 file and get public URL
+- POST /upload-audio - Upload MP3 file to local storage
 - GET /api/upload/files - List all uploaded files
 - DELETE /api/upload/{filename} - Delete a file
 """
 
+import os
+from pathlib import Path
+from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
-
-from backend.services.supabase_storage import upload_file, delete_file, list_files
 
 router = APIRouter(tags=["upload"])
+
+# Get base directory
+BASE_DIR = Path(__file__).parent.parent.parent
+SONGS_DIR = BASE_DIR / "songs"
+SONGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ==================== MODELS ====================
@@ -58,33 +54,24 @@ class FileListResponse(BaseModel):
 @router.post("/upload-audio", response_model=UploadResponse)
 async def upload_audio(file: UploadFile = File(...)):
     """
-    Upload an MP3 file to Supabase Storage
+    Upload an MP3 file to local storage
     
     Flow:
     1. Client sends file to this endpoint
     2. Backend validates file (MP3 only, max 50MB)
-    3. Backend uploads to Supabase Storage (audio-files bucket)
-    4. Backend returns public URL
-    5. Client can use URL to play audio
-    
-    No authentication required (client testing mode).
-    
-    Example usage:
-        curl -X POST -F "file=@song.mp3" https://aidj-backend.onrender.com/upload-audio
+    3. Backend saves to local songs/ folder
+    4. Backend returns local URL for playback
     
     Returns:
         {
             "success": true,
-            "url": "https://xxx.supabase.co/storage/v1/object/public/audio-files/songs/song.mp3",
+            "url": "/static/songs/song.mp3",
             "filename": "song.mp3",
             "message": "File uploaded successfully"
         }
     """
     
-    # Debug logging
-    print(f"🎯 UPLOAD HIT: {file.filename}")
-    print(f"   Content-Type: {file.content_type}")
-    print(f"   Size: {file.size if hasattr(file, 'size') else 'unknown'} bytes")
+    print(f"🎯 UPLOAD: {file.filename}")
     
     # Validate file extension
     if not file.filename or not file.filename.lower().endswith('.mp3'):
@@ -124,86 +111,50 @@ async def upload_audio(file: UploadFile = File(...)):
             detail="Uploaded file is empty"
         )
     
-    # Upload to Supabase Storage
-    result = upload_file(
-        file_data=file_data,
-        filename=file.filename,
-        content_type=file.content_type or "audio/mpeg"
-    )
-    
-    # Check for errors
-    if not result["success"]:
-        error_message = result.get("error", "Unknown error occurred")
-        
-        # Provide helpful error messages
-        if "credentials" in error_message.lower() or "not configured" in error_message.lower():
-            raise HTTPException(
-                status_code=503,
-                detail="Storage service not configured. Please set SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables."
-            )
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Upload failed: {error_message}"
-        )
-    
-    # ALSO save to local /songs folder for mix generation
-    # This allows the pipeline to access files for processing
+    # Save file locally
     try:
-        from pathlib import Path
-        import os
-        
-        # Get base directory
-        BASE_DIR = Path(__file__).parent.parent.parent
-        if os.environ.get('RENDER'):
-            BASE_DIR = Path('/opt/render/project/src')
-        
-        SONGS_DIR = BASE_DIR / "songs"
-        SONGS_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # Save file locally
         local_path = SONGS_DIR / file.filename
         with open(local_path, 'wb') as f:
             f.write(file_data)
-        
-        print(f"✅ Also saved locally: {local_path}")
+        print(f"✅ Saved: {local_path}")
     except Exception as e:
-        print(f"⚠️ Failed to save locally (mix generation may not work): {e}")
-        # Don't fail the request - Supabase upload succeeded
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save file: {str(e)}"
+        )
     
     return UploadResponse(
         success=True,
-        url=result["url"],
+        url=f"/static/songs/{file.filename}",
         filename=file.filename,
-        message="File uploaded successfully to Supabase Storage"
+        message="File uploaded successfully"
     )
 
 
 @router.get("/api/upload/files", response_model=FileListResponse)
 async def get_uploaded_files():
     """
-    List all uploaded audio files in Supabase Storage
+    List all uploaded audio files in local storage
     
     Returns:
-        List of files with their public URLs, sizes, and creation dates
+        List of files with their URLs and sizes
     """
-    result = list_files()
+    files = []
     
-    if not result["success"]:
+    try:
+        for mp3_file in SONGS_DIR.glob("*.mp3"):
+            stat = mp3_file.stat()
+            files.append(FileInfo(
+                name=mp3_file.name,
+                url=f"/static/songs/{mp3_file.name}",
+                size=stat.st_size,
+                created_at=None
+            ))
+    except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=result.get("error", "Failed to list files")
+            detail=f"Failed to list files: {str(e)}"
         )
-    
-    files = [
-        FileInfo(
-            name=f["name"],
-            url=f["url"],
-            size=f.get("size", 0),
-            created_at=f.get("created_at")
-        )
-        for f in result["files"]
-    ]
     
     return FileListResponse(
         success=True,
@@ -215,7 +166,7 @@ async def get_uploaded_files():
 @router.delete("/api/upload/{filename}")
 async def delete_uploaded_file(filename: str):
     """
-    Delete a file from Supabase Storage
+    Delete a file from local storage
     
     Args:
         filename: The name of the file to delete (e.g., "song.mp3")
@@ -229,15 +180,24 @@ async def delete_uploaded_file(filename: str):
             detail="Invalid filename"
         )
     
-    result = delete_file(filename)
+    file_path = SONGS_DIR / filename
     
-    if not result["success"]:
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found: {filename}"
+        )
+    
+    try:
+        file_path.unlink()
+        print(f"🗑️ Deleted: {file_path}")
+    except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=result.get("error", "Delete failed")
+            detail=f"Failed to delete file: {str(e)}"
         )
     
     return {
         "success": True,
-        "message": f"Successfully deleted {filename} from Supabase Storage"
+        "message": f"Successfully deleted {filename}"
     }

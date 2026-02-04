@@ -93,7 +93,6 @@ class PipelineRunner:
     def __init__(self, job: MixJob):
         self.job = job
         # Detect base directory - use current working directory approach
-        # This works both locally and on Render
         cwd = Path.cwd()
         
         # Check if we're running from backend directory or project root
@@ -101,9 +100,6 @@ class PipelineRunner:
             self.base_dir = cwd
         elif (cwd.parent / 'songs').exists():
             self.base_dir = cwd.parent
-        elif os.environ.get('RENDER'):
-            # Fallback for Render
-            self.base_dir = Path('/opt/render/project/src')
         else:
             # Default fallback
             self.base_dir = Path(__file__).parent.parent.parent
@@ -132,52 +128,6 @@ class PipelineRunner:
             self.job.progress_percent = stage_num * 20
         
         await manager.send_progress(self.job.job_id, self.job.progress_percent, stage_num)
-    
-    async def download_songs_from_supabase(self, songs_dir: Path):
-        """Download all songs from Supabase to local directory for processing"""
-        try:
-            from backend.services.supabase_storage import list_files, get_supabase_client
-            
-            await self.log("Downloading songs from Supabase Storage...")
-            
-            result = list_files()
-            if not result["success"]:
-                await self.log(f"Warning: Could not list files from Supabase: {result.get('error')}", "warning")
-                return
-            
-            files = result["files"]
-            await self.log(f"Found {len(files)} songs in Supabase Storage")
-            
-            client = get_supabase_client()
-            if not client:
-                await self.log("Warning: Supabase client not available", "warning")
-                return
-            
-            # Download each song
-            for file_info in files:
-                filename = file_info["name"]
-                local_path = songs_dir / filename
-                
-                # Skip if already exists and is not empty
-                if local_path.exists() and local_path.stat().st_size > 0:
-                    await self.log(f"Skipping {filename} (already exists locally)")
-                    continue
-                
-                try:
-                    # Download from Supabase
-                    file_data = client.storage.from_("audio-files").download(f"songs/{filename}")
-                    
-                    # Save locally
-                    with open(local_path, 'wb') as f:
-                        f.write(file_data)
-                    
-                    await self.log(f"Downloaded {filename} ({len(file_data)} bytes)")
-                except Exception as e:
-                    await self.log(f"Failed to download {filename}: {e}", "error")
-            
-            await self.log("✅ All songs downloaded from Supabase")
-        except Exception as e:
-            await self.log(f"Warning: Error downloading songs from Supabase: {e}", "warning")
     
     async def run(self) -> bool:
         """Execute the full pipeline"""
@@ -228,8 +178,18 @@ class PipelineRunner:
         await self.log(f"Output directory: {output_dir}")
         await self.log(f"Songs directory: {songs_dir}")
         
-        # Download all songs from Supabase before processing
-        await self.download_songs_from_supabase(songs_dir)
+        # Check if songs exist locally
+        song_files = list(songs_dir.glob("*.mp3"))
+        await self.log(f"Found {len(song_files)} song(s) in local storage")
+        
+        if len(song_files) == 0:
+            error_msg = "No songs found! Please upload MP3 files first."
+            await self.log(error_msg, "error")
+            self.job.status = JobStatus.FAILED
+            self.job.error = error_msg
+            self.job.completed_at = datetime.now()
+            await manager.send_error(self.job.job_id, error_msg)
+            return False
         
         try:
             self.job.status = JobStatus.RUNNING
@@ -280,7 +240,8 @@ class PipelineRunner:
                     generate_mixing_plan,
                     basic_setlist_path=str(output_dir / "basic_setlist.json"),
                     structure_json_path=str(output_dir / "structure_data.json"),
-                    output_path=str(output_dir / "mixing_plan.json")
+                    output_path=str(output_dir / "mixing_plan.json"),
+                    songs_dir=str(songs_dir)
                 )
             except Exception as plan_error:
                 error_msg = f"Mixing plan generation failed: {str(plan_error)}"
@@ -401,55 +362,13 @@ class PipelineRunner:
             await self.update_stage(5, "complete")
             await self.log(f"Mix generation complete! 🎧 ({file_size / 1024 / 1024:.2f} MB)")
             
-            # Upload final mix to Supabase for persistent storage
-            from backend.services.supabase_storage import upload_mix_file
+            # Generate local URL for the mix
+            # The mix is served via static files at /static/output/mix.mp3
+            # We need to construct the full URL based on request context
+            # For now, use relative path that frontend will resolve
+            mix_url = "/static/output/mix.mp3"
             
-            try:
-                if not mix_path.exists():
-                    raise Exception(f"Mix file not found at {mix_path}")
-                
-                file_size = mix_path.stat().st_size
-                await self.log(f"📦 Mix file size: {file_size / 1024 / 1024:.2f} MB")
-                
-                if file_size == 0:
-                    raise Exception("Mix file is empty (0 bytes)")
-                
-                await self.log("📤 Uploading final mix to Supabase...")
-                
-                with open(mix_path, "rb") as f:
-                    mix_data = f.read()
-                
-                # Upload with timestamp to avoid conflicts
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                mix_filename = f"mix_{timestamp}.mp3"
-                
-                result = await asyncio.to_thread(
-                    upload_mix_file,
-                    mix_data,
-                    mix_filename,
-                    "audio/mpeg"
-                )
-                
-                if not result.get("success") or not result.get("url"):
-                    error_detail = result.get('error', 'Unknown error')
-                    raise Exception(f"Supabase upload failed: {error_detail}")
-                
-                mix_url = result["url"]
-                await self.log(f"✅ Mix uploaded to Supabase: {mix_filename}")
-                await self.log(f"🔗 Mix URL: {mix_url}")
-                        
-            except Exception as e:
-                error_msg = f"Mix created but Supabase upload failed: {str(e)}"
-                await self.log(error_msg, "error")
-                import traceback
-                await self.log(traceback.format_exc(), "error")
-                
-                self.job.status = JobStatus.FAILED
-                self.job.error = error_msg
-                self.job.completed_at = datetime.now()
-                
-                await manager.send_error(self.job.job_id, error_msg)
-                return False
+            await self.log(f"🔗 Mix URL: {mix_url}")
             
             # Complete
             self.job.status = JobStatus.COMPLETE

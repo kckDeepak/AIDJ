@@ -12,10 +12,19 @@ DJ Mixing Plan Generator (Ready for Mixing Engine)
 
 import os
 import json
+from pathlib import Path
 from datetime import datetime, timedelta
 import librosa
 
-SONGS_DIR = "./songs"
+# Detect songs directory - use absolute path
+_SCRIPT_DIR = Path(__file__).parent
+SONGS_DIR = str(_SCRIPT_DIR / "songs")
+
+def get_songs_dir(override=None):
+    """Get songs directory, preferring override if provided."""
+    if override:
+        return override
+    return SONGS_DIR
 
 # ================= GENRE-SPECIFIC TRANSITION RULES =================
 GENRE_TRANSITION_RULES = {
@@ -351,8 +360,11 @@ def generate_mixing_plan(
     structure_json_path: str = "structure_data.json",
     output_path: str = "mixing_plan.json",
     overlap_duration: float = 8.0,  # 8 seconds overlap at transition
-    fade_duration: float = 1.0  # 1 second fade out
+    fade_duration: float = 1.0,  # 1 second fade out
+    songs_dir: str = None  # Optional songs directory override
 ):
+    # Use provided songs_dir or default
+    current_songs_dir = get_songs_dir(songs_dir)
     try:
         print(f"Loading basic setlist from: {basic_setlist_path}")
         basic_setlist = load_json(basic_setlist_path)
@@ -375,7 +387,7 @@ def generate_mixing_plan(
 
         for idx, track in enumerate(all_tracks):
             print(f"Processing track {idx+1}/{len(all_tracks)}: {track.get('title', 'Unknown')}")
-            file_path = os.path.join(SONGS_DIR, track["file"])
+            file_path = os.path.join(current_songs_dir, track["file"])
             if not os.path.exists(file_path):
                 print(f"  ⚠️ Missing: {file_path}. Skipping.")
                 continue

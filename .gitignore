@@ -2,6 +2,7 @@
 myenv
 myvenv
 backend_venv/
+backend/venv/
 venv/
 .venv/
 __pycache__/

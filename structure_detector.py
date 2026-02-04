@@ -32,8 +32,11 @@ if OpenAI is not None:
     except Exception:
         client = None
 
-SONGS_DIR = "./songs"
-NOTES_DIR = "./notes"
+# Use absolute paths based on script location
+from pathlib import Path
+_SCRIPT_DIR = Path(__file__).parent
+SONGS_DIR = str(_SCRIPT_DIR / "songs")
+NOTES_DIR = str(_SCRIPT_DIR / "notes")
 
 # Create notes directory if it doesn't exist
 if not os.path.exists(NOTES_DIR):
