@@ -1,18 +1,18 @@
-# Backend Requirements for AI DJ Mixing System
+# AI DJ Mixing System Requirements
 
 # FastAPI and Server
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
-# Existing dependencies (from main requirements.txt)
+# Audio Processing & AI
 librosa>=0.10.0
 pydub>=0.25.1
 scipy>=1.11.0
 numpy>=1.24.0
 openai>=1.0.0
 python-dotenv>=1.0.0
+matplotlib>=3.7.0
 
-# Additional utilities
+# Utilities
 aiofiles==23.2.1
-python-jose[cryptography]==3.3.0
