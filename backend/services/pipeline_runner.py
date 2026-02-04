@@ -197,14 +197,14 @@ class PipelineRunner:
             
             # Sync songs from Supabase to ensure we have all files locally for processing
             await self.log("☁️ Syncing songs from Supabase Storage...")
-            files = supabase_service.list_files("songs")
+            files = supabase_service.list_files("songs_bucket_1")
             synced_count = 0
             for file in files:
                 fname = file.get('name')
                 if fname and fname.endswith('.mp3'):
                     local_fpath = songs_dir / fname
                     if not local_fpath.exists():
-                        if supabase_service.download_file("songs", fname, local_fpath):
+                        if supabase_service.download_file("songs_bucket_1", fname, local_fpath):
                             synced_count += 1
             if synced_count > 0:
                 await self.log(f"   ✓ Downloaded {synced_count} songs from cloud")
@@ -380,7 +380,7 @@ class PipelineRunner:
             # Upload Mix to Supabase
             await self.log("☁️ Uploading mix to Supabase Storage...")
             mix_filename = f"mix_{self.job.job_id}.mp3"
-            mix_url = supabase_service.upload_file("mixes", mix_path, mix_filename)
+            mix_url = supabase_service.upload_file("mixes_bucket_1", mix_path, mix_filename)
             
             if not mix_url:
                 await self.log("⚠️ Upload failed, falling back to local URL", "warning")

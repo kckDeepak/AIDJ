@@ -12,6 +12,10 @@ import os
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware

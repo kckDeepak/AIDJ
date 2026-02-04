@@ -89,7 +89,7 @@ async def list_songs():
     songs = []
     
     # List files from Supabase 'songs' bucket
-    files = supabase_service.list_files("songs")
+    files = supabase_service.list_files("songs_bucket_1")
     
     for file in files:
         filename = file.get('name')
@@ -140,7 +140,7 @@ async def upload_song(file: UploadFile = File(...)):
             tmp_path = Path(tmp.name)
             
         # Upload to Supabase
-        public_url = supabase_service.upload_file("songs", tmp_path, filename)
+        public_url = supabase_service.upload_file("songs_bucket_1", tmp_path, filename)
         
         # Clean up temp file
         if tmp_path.exists():
@@ -188,7 +188,7 @@ async def get_song_waveform(filename: str, points: int = Query(default=100, le=5
     
     # If not local, download it
     if not local_path.exists():
-        success = supabase_service.download_file("songs", filename, local_path)
+        success = supabase_service.download_file("songs_bucket_1", filename, local_path)
         if not success:
              raise HTTPException(status_code=404, detail=f"Song not found in cloud storage: {filename}")
     

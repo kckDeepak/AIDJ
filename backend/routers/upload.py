@@ -68,7 +68,7 @@ async def upload_audio(file: UploadFile = File(...)):
             tmp_path = Path(tmp.name)
             
         # Upload to Supabase
-        public_url = supabase_service.upload_file("songs", tmp_path, filename)
+        public_url = supabase_service.upload_file("songs_bucket_1", tmp_path, filename)
         
         # Clean up
         if tmp_path.exists():
@@ -99,7 +99,7 @@ async def get_uploaded_files():
     files = []
     
     try:
-        storage_files = supabase_service.list_files("songs")
+        storage_files = supabase_service.list_files("songs_bucket_1")
         for f in storage_files:
             name = f.get('name')
             if name and name.endswith('.mp3'):
