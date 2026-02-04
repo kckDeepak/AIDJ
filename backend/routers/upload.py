@@ -1,28 +1,21 @@
 """
-Upload Router - Local Storage Upload API
+Upload Router - Cloud Storage Upload API
 =========================================
 
-Simple file upload that saves MP3 files directly to the local songs/ folder.
-
-Endpoints:
-- POST /upload-audio - Upload MP3 file to local storage
-- GET /api/upload/files - List all uploaded files
-- DELETE /api/upload/{filename} - Delete a file
+Endoint to upload files to Supabase Storage.
 """
 
 import os
+import tempfile
+import shutil
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
+from backend.services.supabase_client import supabase_service
+
 router = APIRouter(tags=["upload"])
-
-# Get base directory
-BASE_DIR = Path(__file__).parent.parent.parent
-SONGS_DIR = BASE_DIR / "songs"
-SONGS_DIR.mkdir(parents=True, exist_ok=True)
-
 
 # ==================== MODELS ====================
 
@@ -54,21 +47,7 @@ class FileListResponse(BaseModel):
 @router.post("/upload-audio", response_model=UploadResponse)
 async def upload_audio(file: UploadFile = File(...)):
     """
-    Upload an MP3 file to local storage
-    
-    Flow:
-    1. Client sends file to this endpoint
-    2. Backend validates file (MP3 only, max 50MB)
-    3. Backend saves to local songs/ folder
-    4. Backend returns local URL for playback
-    
-    Returns:
-        {
-            "success": true,
-            "url": "/static/songs/song.mp3",
-            "filename": "song.mp3",
-            "message": "File uploaded successfully"
-        }
+    Upload an MP3 file to Supabase Storage
     """
     
     print(f"🎯 UPLOAD: {file.filename}")
@@ -80,81 +59,61 @@ async def upload_audio(file: UploadFile = File(...)):
             detail="Only MP3 files are allowed. Please upload a .mp3 file."
         )
     
-    # Validate content type
-    allowed_types = ["audio/mpeg", "audio/mp3", "application/octet-stream"]
-    if file.content_type and file.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid content type: {file.content_type}. Expected audio/mpeg or audio/mp3."
-        )
+    filename = file.filename
     
-    # Read file content
     try:
-        file_data = await file.read()
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+            
+        # Upload to Supabase
+        public_url = supabase_service.upload_file("songs", tmp_path, filename)
+        
+        # Clean up
+        if tmp_path.exists():
+            tmp_path.unlink()
+            
+        if not public_url:
+             raise HTTPException(status_code=500, detail="Failed to get public URL from storage")
+
+        return UploadResponse(
+            success=True,
+            url=public_url,
+            filename=filename,
+            message="File uploaded successfully"
+        )
+            
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to read uploaded file: {str(e)}"
+            detail=f"Failed to upload file: {str(e)}"
         )
-    
-    # Check file size (max 50MB)
-    max_size = 50 * 1024 * 1024  # 50MB in bytes
-    if len(file_data) > max_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is 50MB. Your file: {len(file_data) / 1024 / 1024:.2f}MB"
-        )
-    
-    if len(file_data) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded file is empty"
-        )
-    
-    # Save file locally
-    try:
-        local_path = SONGS_DIR / file.filename
-        with open(local_path, 'wb') as f:
-            f.write(file_data)
-        print(f"✅ Saved: {local_path}")
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save file: {str(e)}"
-        )
-    
-    return UploadResponse(
-        success=True,
-        url=f"/static/songs/{file.filename}",
-        filename=file.filename,
-        message="File uploaded successfully"
-    )
 
 
 @router.get("/api/upload/files", response_model=FileListResponse)
 async def get_uploaded_files():
     """
-    List all uploaded audio files in local storage
-    
-    Returns:
-        List of files with their URLs and sizes
+    List all uploaded audio files in storage
     """
     files = []
     
     try:
-        for mp3_file in SONGS_DIR.glob("*.mp3"):
-            stat = mp3_file.stat()
-            files.append(FileInfo(
-                name=mp3_file.name,
-                url=f"/static/songs/{mp3_file.name}",
-                size=stat.st_size,
-                created_at=None
-            ))
+        storage_files = supabase_service.list_files("songs")
+        for f in storage_files:
+            name = f.get('name')
+            if name and name.endswith('.mp3'):
+                files.append(FileInfo(
+                    name=name,
+                    url="", # We don't fetch full URL here to save time, or we could
+                    size=f.get('metadata', {}).get('size', 0),
+                    created_at=f.get('created_at')
+                ))
+
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list files: {str(e)}"
-        )
+        print(f"List error: {e}")
+        # Return empty list instead of crashing
+        pass
     
     return FileListResponse(
         success=True,
@@ -166,38 +125,10 @@ async def get_uploaded_files():
 @router.delete("/api/upload/{filename}")
 async def delete_uploaded_file(filename: str):
     """
-    Delete a file from local storage
-    
-    Args:
-        filename: The name of the file to delete (e.g., "song.mp3")
-        
-    Returns:
-        Success message or error
+    Delete a file from storage
     """
-    if not filename.lower().endswith('.mp3'):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid filename"
-        )
-    
-    file_path = SONGS_DIR / filename
-    
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"File not found: {filename}"
-        )
-    
-    try:
-        file_path.unlink()
-        print(f"🗑️ Deleted: {file_path}")
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete file: {str(e)}"
-        )
-    
+    # Placeholder for delete
     return {
-        "success": True,
-        "message": f"Successfully deleted {filename}"
+        "success": False,
+        "message": "Delete not fully implemented for cloud storage in this router"
     }

@@ -283,7 +283,7 @@ export default function HomePage() {
           bpm: 0,
           key: 'Unknown',
           file,
-          url: `${API_BASE_URL}${uploadResult.url}`,
+          url: uploadResult.url && uploadResult.url.startsWith('http') ? uploadResult.url : `${API_BASE_URL}${uploadResult.url}`,
         };
         setSongs((prev) => [...prev, newSong]);
 
@@ -315,7 +315,7 @@ export default function HomePage() {
           bpm: song.bpm || 0,
           key: song.key || 'Unknown',
           file: new File([], song.filename),
-          url: `${API_BASE_URL}/static/songs/${song.filename}`,
+          url: song.url || `${API_BASE_URL}/static/songs/${song.filename}`,
           duration: song.duration,
         }));
         
@@ -610,7 +610,7 @@ export default function HomePage() {
           bpm: song.bpm || 0,
           key: song.key || 'Unknown',
           file: new File([], song.filename),
-          url: `${API_BASE_URL}/static/songs/${song.filename}`,
+          url: song.url || `${API_BASE_URL}/static/songs/${song.filename}`,
           duration: song.duration,
         }));
 

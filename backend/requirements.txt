@@ -16,3 +16,4 @@ matplotlib>=3.7.0
 
 # Utilities
 aiofiles==23.2.1
+supabase==2.3.0

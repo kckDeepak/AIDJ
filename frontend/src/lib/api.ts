@@ -13,6 +13,7 @@ export interface Song {
     genre?: string;
     energy?: number;
     duration?: number;
+    url?: string;
 }
 
 export interface MixJob {

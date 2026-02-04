@@ -21,6 +21,7 @@ from enum import Enum
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.services.websocket_manager import manager
+from backend.services.supabase_client import supabase_service
 
 
 class JobStatus(str, Enum):
@@ -194,6 +195,20 @@ class PipelineRunner:
         try:
             self.job.status = JobStatus.RUNNING
             
+            # Sync songs from Supabase to ensure we have all files locally for processing
+            await self.log("☁️ Syncing songs from Supabase Storage...")
+            files = supabase_service.list_files("songs")
+            synced_count = 0
+            for file in files:
+                fname = file.get('name')
+                if fname and fname.endswith('.mp3'):
+                    local_fpath = songs_dir / fname
+                    if not local_fpath.exists():
+                        if supabase_service.download_file("songs", fname, local_fpath):
+                            synced_count += 1
+            if synced_count > 0:
+                await self.log(f"   ✓ Downloaded {synced_count} songs from cloud")
+            
             # Stage 1: Song Selection
             await self.update_stage(1, "running")
             await self.log("Starting song selection based on your request...")
@@ -362,11 +377,16 @@ class PipelineRunner:
             await self.update_stage(5, "complete")
             await self.log(f"Mix generation complete! 🎧 ({file_size / 1024 / 1024:.2f} MB)")
             
-            # Generate local URL for the mix
-            # The mix is served via static files at /static/output/mix.mp3
-            # We need to construct the full URL based on request context
-            # For now, use relative path that frontend will resolve
-            mix_url = "/static/output/mix.mp3"
+            # Upload Mix to Supabase
+            await self.log("☁️ Uploading mix to Supabase Storage...")
+            mix_filename = f"mix_{self.job.job_id}.mp3"
+            mix_url = supabase_service.upload_file("mixes", mix_path, mix_filename)
+            
+            if not mix_url:
+                await self.log("⚠️ Upload failed, falling back to local URL", "warning")
+                mix_url = "/static/output/mix.mp3"
+            else:
+                await self.log(f"   ✓ Uploaded: {mix_url}")
             
             await self.log(f"🔗 Mix URL: {mix_url}")
             

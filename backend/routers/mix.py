@@ -122,9 +122,15 @@ async def download_mix(job_id: str):
     if job.status != JobStatus.COMPLETE:
         raise HTTPException(status_code=400, detail=f"Mix not ready. Status: {job.status.value}")
     
+    # If we have a cloud URL, redirect to it
+    if job.mix_url and job.mix_url.startswith("http"):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=job.mix_url)
+    
+    # Fallback to local file if path is relative
     mix_path = OUTPUT_DIR / "mix.mp3"
     if not mix_path.exists():
-        raise HTTPException(status_code=404, detail="Mix file not found")
+        raise HTTPException(status_code=404, detail="Mix file not found locally or in cloud")
     
     from fastapi.responses import FileResponse
     return FileResponse(
